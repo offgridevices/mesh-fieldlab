@@ -7,15 +7,18 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+# NOTE: lib/ and build/ are anchored to the repository root on purpose.
+# Unanchored, they match at any depth and would silently swallow firmware
+# source directories such as firmware/lib/ — with no error and no warning.
 .Python
-build/
+/build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -229,6 +232,14 @@ third_party/
 external/
 **/site-planner/
 **/splat/
+
+# ---------------------------------------------------------------------------
+# PlatformIO / embedded build output.
+# ---------------------------------------------------------------------------
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/extensions.json
 
 # ---------------------------------------------------------------------------
 # Local-only working notes. Not published.

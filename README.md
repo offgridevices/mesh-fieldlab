@@ -33,31 +33,45 @@ This repository is **measurement and analysis only**. Concretely, that means:
 ## Intended hardware
 
 - **Nodes:** RAK WisBlock / RAK4631 running Meshtastic, US915 region
-- **Logger:** Raspberry Pi Zero 2 W tethered to a node over USB, writing to local storage
-- Anything else that speaks the Meshtastic serial protocol should work
+- **Logger:** Seeed XIAO ESP32-C6 wired to the node's UART header, writing to a microSD card. It speaks the Meshtastic client protocol over serial — the same one a phone uses — so the node needs no modified firmware.
+- **Power:** a single LiPo on the node's battery connector feeds both boards; there is no second supply and no 5 V rail.
+- Anything else that speaks the Meshtastic serial protocol should work.
+
+See [docs/packet-logger-design.md](docs/packet-logger-design.md) for the wiring, file format, and validation procedure.
 
 ## Dependencies and licensing
 
-This project depends on the official [Meshtastic Python library](https://github.com/meshtastic/Meshtastic-python), which is licensed **GPL-3.0**. Because a Python import of a GPL-3.0 library creates a derivative work, **this repository is also licensed GPL-3.0**. That is a deliberate choice rather than a default: it keeps the licensing honest and unambiguous.
+This project depends on the official [Meshtastic Python library](https://github.com/meshtastic/Meshtastic-python) and, for the logger firmware, on [Meshtastic-arduino](https://github.com/meshtastic/Meshtastic-arduino). Both are licensed **GPL-3.0**, so **this repository is also licensed GPL-3.0**. That is a deliberate choice rather than a default: it keeps the licensing honest and unambiguous.
 
 Expected dependency set:
 
 | Dependency | Purpose | License |
 |---|---|---|
-| `meshtastic` | Node communication | GPL-3.0 |
+| `meshtastic` | Node communication (Python tooling) | GPL-3.0 |
+| `Meshtastic-arduino` | Node communication (logger firmware) | GPL-3.0 |
 | `pyserial` | Serial transport | BSD-3-Clause |
 | `pandas` | Log analysis | BSD-3-Clause |
 | `matplotlib` | Plots | PSF-based |
 
 If you add a dependency, record its license in this table in the same commit.
 
+### Our fork of Meshtastic-arduino
+
+The firmware builds against [`offgridevices/Meshtastic-arduino`](https://github.com/offgridevices/Meshtastic-arduino), a fork of the upstream library, pinned to an exact commit.
+
+The fork exists for one reason: upstream decodes each packet's RSSI and SNR and then discards them — none of its three callbacks pass those fields to the caller, and no setting changes that. Since RSSI and SNR are the entire measurement, the fork adds one additional callback carrying the full packet metadata. Existing callbacks are untouched. The change will be offered upstream once it has been validated in the field.
+
+The fork remains GPL-3.0, and its commit history is the record of what was modified.
+
 ## Third-party source is never vendored here
 
-Dependencies are installed from package managers. Source copies of external projects are **not** committed to this repository, and are not kept inside this working tree at all — local clones used for reading or reference live outside it, and `.gitignore` additionally blocks the usual paths (`reference/`, `vendor/`, `third_party/`, `external/`) so that an accidental copy cannot be staged.
+Dependencies are installed from package managers, or referenced by URL and pinned commit. Source copies of external projects are **not** committed to this repository, and are not kept inside this working tree at all — local clones used for reading or reference live outside it, and `.gitignore` additionally blocks the usual paths (`reference/`, `vendor/`, `third_party/`, `external/`) so that an accidental copy cannot be staged.
 
 This matters for a practical reason: license obligations travel with code. Keeping other projects' source physically outside this tree means the provenance of everything committed here is unambiguous, both for this repository and for any other project developed alongside it.
 
-**If you are contributing:** do not paste code in from another project. Import it as a dependency, or write it yourself.
+**When a dependency must be modified**, it is forked into its own repository and referenced here by URL and exact commit — never copied in and edited in place. What this repository commits is a reference, so provenance stays trivially answerable, and the fork's own commit history serves as the record of modification that GPL-3.0 requires. Record any such fork in the dependency table above, with its license and the reason it exists.
+
+**If you are contributing:** do not paste code in from another project. Import it as a dependency, fork it and pin it, or write it yourself.
 
 ## Data handling
 
