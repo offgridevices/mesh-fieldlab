@@ -52,8 +52,11 @@ Expected dependency set:
 | `pyserial` | Serial transport | BSD-3-Clause |
 | `pandas` | Log analysis | BSD-3-Clause |
 | `matplotlib` | Plots | PSF-based |
+| `pytest` | Tests (development only) | MIT |
 
 If you add a dependency, record its license in this table in the same commit.
+
+The log validator in `tools/` deliberately has **no runtime dependencies at all**: it needs to run on whatever laptop is in the field, against a card that was just pulled out of a node, without installing anything first.
 
 ### Our fork of Meshtastic-arduino
 

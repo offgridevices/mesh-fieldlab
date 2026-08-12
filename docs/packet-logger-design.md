@@ -210,33 +210,56 @@ One file per node per boot: `/LOG_<SHORTNAME>_<BOOTCOUNT>.csv`
 ```
 schema_ver,uptime_ms,dev_rx_time,rx_node,tx_node,pkt_id,rx_rssi_dbm,rx_snr_db,
 hop_limit,hop_start,hops_used,relay_node,next_hop,via_mqtt,portnum,payload_size,
-channel,row_type
+channel,row_type,extra
 ```
+
+`tools/src/fieldlab/schema.py` is the machine-readable version of this section, and `validate-csv --schema` prints the exact header the firmware must write.
 
 | Field | Meaning |
 |---|---|
 | `schema_ver` | Starts at 3. Bump on any change |
 | `uptime_ms` | Milliseconds since boot — the authoritative relative clock |
 | `dev_rx_time` | Device epoch seconds — absolute clock, `0` if never set |
-| `rx_node` | The logging node |
-| `tx_node` | Packet originator |
+| `rx_node` | The logging node. Constant for the whole file |
+| `tx_node` | Packet originator on `PKT` rows; the node being described on `NODE` rows |
 | `pkt_id` | Dedupe key for flood copies |
 | `rx_rssi_dbm` | Negative; closer to zero is stronger. **`0` means locally originated — filter out** |
 | `rx_snr_db` | LoRa decodes to roughly −20 dB |
 | `hop_limit` / `hop_start` | Remaining hops, and hops the packet started with |
 | `hops_used` | Computed as `hop_start - hop_limit`. **`0` means direct reception** |
-| `relay_node` / `next_hop` | Routing hints, `0` if none |
+| `relay_node` / `next_hop` | Single bytes — the *last byte* of a node number, not a whole one. Routing hints, `0` if none |
 | `via_mqtt` | Must be `0`; anything else means an internet gateway is polluting the data |
 | `portnum`, `payload_size`, `channel` | Application port, byte count, channel index |
 | `row_type` | `PKT` \| `STATUS` \| `NODE` \| `BOOT` |
+| `extra` | Empty on `PKT` rows. Everything a non-packet row needs to say, as `key=value` pairs joined by `;` |
 
-Non-packet rows:
+### 6.1 Non-packet rows
 
-- **`BOOT`** — schema version, firmware version, modem preset, fixed position, boot count, antenna model
-- **`STATUS`** — every 60 s: uptime, rows written, card healthy, free memory
-- **`NODE`** — periodic node-database dump: node numbers, names, positions, battery, last heard
+Four kinds of row share one set of columns, because one open file on a microSD card is far more robust on an unattended node than four. The packet columns are fixed and typed; anything a `BOOT`, `STATUS` or `NODE` row needs beyond them goes in `extra`. Packet columns are written as `0` on those rows, so a reader filtering by `row_type` never has to wonder whether a value is real.
 
-**This format is the contract between the logger and the analysis tooling.** Its checker is written before the firmware, so the format is settled before anything depends on it.
+Values may not contain a comma or a semicolon. That keeps the field unquoted and readable by any CSV parser, and a stray separator is reported as an error rather than silently truncating a value.
+
+| Row | Written | Required in `extra` |
+|---|---|---|
+| `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
+| `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
+| `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
+
+### 6.2 The checker
+
+**This format is the contract between the logger and the analysis tooling**, so its checker was written before the firmware. `validate-csv` separates two kinds of problem.
+
+An **error** means the file cannot be trusted: a wrong header, an impossible value, a hop count that contradicts itself, a node apparently receiving its own transmission, packets that arrived over MQTT rather than the air, a fixed position left at 0,0. Analysing a file with errors produces numbers that look reasonable and mean nothing.
+
+A **warning** means the file is readable but something is worth knowing: a truncated last row where the node lost power mid-write, a gap where the status heartbeat stopped, a link with too few packets to take a median from.
+
+Run it on the card before leaving the site:
+
+```bash
+uv run validate-csv /Volumes/LOGGER/ --min-packets 100
+```
+
+`synth-log` writes schema-valid files with invented numbers, so the analysis tooling can be built and tested before there is hardware to record anything real.
 
 ## 7. Position and time without GPS
 
@@ -331,7 +354,11 @@ meshtastic --port <PORT> \
 
 **Airtime discipline.** Four nodes at one packet per minute on LONG_FAST is modest, but a hop limit of 3 means flooding multiplies packets on air. **Start at 60 s.** Going below 30 s without computing airtime will saturate the channel and you will measure congestion rather than path loss.
 
-**Target ≥100 received packets per directed link** for a stable median. At 60 s intervals with four senders, each node hears roughly 3 packets per minute — about 35 minutes as an absolute floor, realistically 60+ to survive fading.
+**Target ≥100 received packets per directed link** for a stable median — per *link*, not per node. That distinction sets the length of the whole field day, and getting it wrong is how a session comes home a third short.
+
+With four nodes each sending once a minute, a node hears about three packets a minute, but only **one per minute from any one sender**. Reaching 100 on every link therefore takes roughly **100 minutes of received packets, not 35** — and longer in practice, because only direct receptions (`hops_used == 0`) count toward a path measurement and some fraction of arrivals will have been relayed.
+
+Plan on **two hours at 60 s intervals**. Shortening the interval shortens the session proportionally but loads the channel by the same factor, and below 30 s you are measuring congestion rather than path loss. Check progress on the card before packing up: `validate-csv --min-packets 100` reports the count on every link it saw.
 
 ## 11. Analysis
 
@@ -371,7 +398,7 @@ Build **one** complete node and validate it end to end before assembling the oth
 6. Forked library, RSSI and SNR printed to the console. From across a room expect −30 to −60 dBm and +5 to +12 dB.
 7. Add card writing. Power-cycle mid-write repeatedly; confirm no corruption and a fresh file per boot.
 8. Measure actual current draw and replace the estimates in §5.3.
-9. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other, counts are roughly symmetric, files parse.
+9. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
 10. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
 11. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance.
 
@@ -384,10 +411,15 @@ firmware/                 PlatformIO project for the logger board
   platformio.ini
   src/main.cpp
 tools/                    Python, uv-managed
-  validate_csv.py         schema check; written first
-  configure_node.py       applies radio config, saves --info dump
-  dem_lookup.py           lat/lon -> ground elevation
-  analyze.py              dedupe, direct-only filter, per-link metrics
+  src/fieldlab/
+    schema.py             the file format; single source of truth
+    validate.py           the checker; written before the firmware
+    synth.py              schema-valid sample data, for building the analysis
+    cli.py                validate-csv, synth-log
+    configure_node.py     applies radio config, saves --info dump
+    dem_lookup.py         lat/lon -> ground elevation
+    analyze.py            dedupe, direct-only filter, per-link metrics
+  tests/
 config/                   per-node --info dumps
 data/                     field logs (data/raw is gitignored)
 docs/

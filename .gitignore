@@ -151,7 +151,9 @@ activemq-data/
 *.sage.py
 
 # Environments
-.env
+# NOTE: .env* rather than .env — the bare pattern matches only that exact
+# name, and leaves .env.local, .env.production and the rest committable.
+.env*
 .envrc
 .venv
 env/
@@ -240,6 +242,29 @@ external/
 .pioenvs/
 .piolibdeps/
 .vscode/extensions.json
+
+# ---------------------------------------------------------------------------
+# Credentials and keys. Nothing here should ever exist in this repository;
+# these patterns are a backstop so a stray file cannot be staged by accident.
+# ---------------------------------------------------------------------------
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.asc
+*.gpg
+credentials.json
+credentials.yaml
+service-account*.json
+*-credentials.json
+.netrc
+.pypirc
+secrets.*
+*.secret
 
 # ---------------------------------------------------------------------------
 # Local-only working notes. Not published.
