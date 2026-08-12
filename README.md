@@ -1,4 +1,4 @@
-# cairn-fieldlab
+# mesh-fieldlab
 
 Open measurement and packet-logging tooling for LoRa mesh field tests.
 
@@ -8,7 +8,7 @@ Open measurement and packet-logging tooling for LoRa mesh field tests.
 
 A Meshtastic node paired with a phone shows you signal strength *live*. That is useful for a smoke test and useless for a measurement. It does not write every packet to a file, so there is no way to turn "I saw a few bars on my phone out there" into a dataset you can analyse, plot, or hand to somebody else.
 
-`cairn-fieldlab` is the logging layer that closes that gap. It tethers to LoRa mesh nodes in the field, records what actually arrives, and writes it to disk in a stable format so that outdoor tests produce evidence instead of impressions.
+`mesh-fieldlab` is the logging layer that closes that gap. It tethers to LoRa mesh nodes in the field, records what actually arrives, and writes it to disk in a stable format so that outdoor tests produce evidence instead of impressions.
 
 ## Scope
 
