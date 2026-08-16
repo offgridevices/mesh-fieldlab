@@ -406,7 +406,9 @@ Non-negotiable for unattended use:
 
 Power management: WiFi off, Bluetooth off, CPU at 80 MHz. **No deep sleep** — the logger must continuously service the serial stream.
 
-Per-node settings live in one block at the top of `main.cpp`: short name, pins, baud, flush thresholds, schema version. One edit per unit.
+Per-node settings live in `firmware/src/config.h`: short name, pins, baud, flush thresholds, timings. It is the only file that differs between the four units — change the name, flash, label the box.
+
+**Build with the `pioarduino` platform, not `espressif32`.** The official PlatformIO ESP32 platform still ships Arduino core 2.x, which has no ESP32-C6 support at all and fails outright with *"This board doesn't support arduino framework!"*. The community fork carries Arduino core 3.x and is what every C6 board needs today. It is pinned in `platformio.ini` for the same reason the library is.
 
 The `BOOT` row records the self-test outcome alongside the configuration, so a file can be judged later without anyone having to remember what the screen said at the time.
 
@@ -480,7 +482,13 @@ A 3.3 V USB-serial adapter is required. **A 5 V logic adapter will damage the nR
 ```
 firmware/                 PlatformIO project for the logger board
   platformio.ini
-  src/main.cpp
+  src/
+    config.h              per-node settings; the only file that varies
+    log_schema.h          the CSV contract, mirroring the Python schema
+    logfile.*             card, boot counter, rows, flushing, recovery
+    screen.*              the OLED; optional at runtime
+    selftest.*            the boot checks and how they are shown
+    main.cpp              callbacks and the loop
 tools/                    Python, uv-managed
   src/fieldlab/
     schema.py             the file format; single source of truth
@@ -513,6 +521,7 @@ Determined only with hardware in hand:
 5. Which antenna model shipped with the radio kits, for the baseline record
 6. The OLED's I²C address — `0x3C` on most of these modules, `0x3D` on some. Scan the bus on the first unit and record it; a wrong address looks exactly like a dead screen
 7. Whether the OLED module's regulator is happy at 3.3 V — many are sold as "3.3–5 V" but a few assume 5 V and are dim or dead on a 3.3 V rail. There is no 5 V rail here
+8. Whether altitude survives the trip. `Meshtastic-arduino` narrows the protocol's 32-bit altitude to a **signed byte** in its node struct, so anything outside ±127 m is already lost before the logger sees it. Fine for the sites in mind, but it is a third field the library quietly damages, and it would need the same treatment as the other two if a taller site is ever used
 
 Each is written so it is a one-line change, not a rewrite.
 

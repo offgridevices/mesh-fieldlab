@@ -7,7 +7,25 @@ import pytest
 
 from fieldlab import schema as S
 
-DESIGN_DOC = Path(__file__).resolve().parents[2] / "docs" / "packet-logger-design.md"
+REPO = Path(__file__).resolve().parents[2]
+DESIGN_DOC = REPO / "docs" / "packet-logger-design.md"
+FIRMWARE_SCHEMA = REPO / "firmware" / "src" / "log_schema.h"
+
+
+def _c_macro(text: str, name: str) -> str:
+    """Return a C macro's value, joining its line continuations."""
+    match = re.search(rf"^#define\s+{name}\b(.*)$", text, re.M)
+    if not match:
+        return ""
+    lines = [match.group(1)]
+    pos = match.end()
+    while lines[-1].rstrip().endswith("\\"):
+        end = text.find("\n", pos + 1)
+        if end == -1:
+            break
+        lines.append(text[pos:end])
+        pos = end
+    return "".join(lines)
 
 
 def test_column_names_are_unique():
@@ -68,6 +86,43 @@ def test_the_design_document_describes_the_same_columns_as_the_code():
     assert match, "no header block found in the design document"
     documented = match.group(0).replace("\n", "")
     assert documented == S.HEADER
+
+
+def test_the_firmware_writes_the_columns_this_module_expects():
+    """The firmware and this module are the two halves of one contract.
+
+    They are written in different languages and cannot share a definition, so
+    a column added on one side would otherwise silently go missing on the
+    other — and the first symptom would be a field day of unreadable files.
+    """
+    if not FIRMWARE_SCHEMA.exists():
+        pytest.skip("firmware not present")
+
+    text = FIRMWARE_SCHEMA.read_text()
+    written = "".join(re.findall(r'"([^"]*)"', _c_macro(text, "LOG_HEADER")))
+    assert written == S.HEADER
+
+
+def test_the_firmware_writes_the_schema_version_this_module_expects():
+    if not FIRMWARE_SCHEMA.exists():
+        pytest.skip("firmware not present")
+
+    value = _c_macro(FIRMWARE_SCHEMA.read_text(), "LOG_SCHEMA_VERSION").strip()
+    assert int(value) == S.SCHEMA_VERSION
+
+
+def test_the_firmware_and_this_module_agree_on_the_row_type_names():
+    if not FIRMWARE_SCHEMA.exists():
+        pytest.skip("firmware not present")
+
+    text = FIRMWARE_SCHEMA.read_text()
+    for macro, expected in (
+        ("ROW_PKT", S.ROW_PKT),
+        ("ROW_STATUS", S.ROW_STATUS),
+        ("ROW_NODE", S.ROW_NODE),
+        ("ROW_BOOT", S.ROW_BOOT),
+    ):
+        assert _c_macro(text, macro).strip().strip('"') == expected, macro
 
 
 def test_packet_only_columns_are_the_ones_that_describe_a_reception():
