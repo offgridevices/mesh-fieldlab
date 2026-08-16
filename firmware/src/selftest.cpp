@@ -230,30 +230,16 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            (unsigned)r.battery_pct);
 }
 
-void toScreen(const Result & r, char l1[26], char l2[26], char l3[26], char l4[26]) {
-  snprintf(l1, 26, "%s %u%%%s CARD %s",
-           NODE_SHORT_NAME,
-           (unsigned)r.battery_pct,
-           r.battery_pct ? "" : "?",
-           r.card_writable ? "OK" : "BAD");
-
-  if (r.radio_ok) {
-    snprintf(l2, 26, "RADIO OK %s %s",
-             presetName(r.preset), regionName(r.region));
-  } else {
-    snprintf(l2, 26, "RADIO: NO ANSWER");
-  }
-
-  snprintf(l3, 26, "POS %s  CLOCK %s  h%u",
-           r.fixed_position ? "OK" : "--",
-           r.clock_set ? "OK" : "--",
-           (unsigned)r.hop_limit);
-
-  if (r.heard_count > 0) {
-    snprintf(l4, 26, "HEARD %u  READY", (unsigned)r.heard_count);
-  } else {
-    snprintf(l4, 26, "HEARD NONE  READY");
-  }
+const char * verdict(const Result & r) {
+  // Ordered by what stops the session soonest. A card that cannot be written
+  // means nothing is recorded at all; a silent radio means nothing arrives to
+  // record; the rest degrade the result rather than ending it.
+  if (!r.card_writable)  return "NO CARD";
+  if (!r.radio_ok)       return "NO RADIO";
+  if (!r.fixed_position) return "NO POS";
+  if (!r.clock_set)      return "NO CLOCK";
+  if (r.heard_count == 0) return "ALONE";
+  return "READY";
 }
 
 }  // namespace SelfTest

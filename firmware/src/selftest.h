@@ -56,8 +56,12 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
 // the screen said. Nobody remembers by the time the card is read.
 void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n);
 
-// The four lines shown at the end of the test.
-void toScreen(const Result & r, char l1[26], char l2[26], char l3[26], char l4[26]);
+// The single word shown large at the end of the test.
+//
+// Where more than one check failed this names the one that matters most,
+// because a person reading a screen in a field wants the next action, not a
+// complete account. The block row underneath carries the full picture.
+const char * verdict(const Result & r);
 
 const char * presetName(uint8_t preset);
 const char * regionName(uint8_t region);

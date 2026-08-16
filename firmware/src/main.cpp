@@ -32,6 +32,36 @@ uint32_t g_lastPacketAt = 0;
 bool g_buttonWasDown = false;
 uint32_t g_buttonChangedAt = 0;
 
+//: Which page the button is showing. Stays where it was left, so a second
+//: visit to the same node opens where you were looking.
+uint8_t g_page = 0;
+
+Screen::NodeView g_view;
+SelfTest::Result g_selfTest;
+
+//: Per-neighbour tallies, so the neighbours page can say who and how well
+//: rather than only how many.
+uint32_t g_peer[Screen::MAX_NEIGHBOURS] = {0};
+uint32_t g_peerPkts[Screen::MAX_NEIGHBOURS] = {0};
+int32_t  g_peerRssiSum[Screen::MAX_NEIGHBOURS] = {0};
+uint8_t  g_peerCount = 0;
+
+void notePeer(uint32_t node, int32_t rssi) {
+  if (node == 0 || node == my_node_num) return;
+  for (uint8_t i = 0; i < g_peerCount; i++) {
+    if (g_peer[i] == node) {
+      g_peerPkts[i]++;
+      g_peerRssiSum[i] += rssi;
+      return;
+    }
+  }
+  if (g_peerCount >= Screen::MAX_NEIGHBOURS) return;
+  g_peer[g_peerCount] = node;
+  g_peerPkts[g_peerCount] = 1;
+  g_peerRssiSum[g_peerCount] = rssi;
+  g_peerCount++;
+}
+
 // --- callbacks --------------------------------------------------------------
 
 void onPacket(const mt_packet_meta_t * meta) {
@@ -52,6 +82,8 @@ void onPacket(const mt_packet_meta_t * meta) {
                 meta->is_decoded ? "" : "  [encrypted]");
 #endif
 
+  notePeer(meta->from, meta->rx_rssi);
+
   if (g_booting) {
     SelfTest::notePacket(meta);
     return;
@@ -71,30 +103,37 @@ void onNodeReport(mt_node_t * node, mt_nr_progress_t progress) {
 
 // --- display ----------------------------------------------------------------
 
-void showRunningSummary() {
-  uint32_t up = millis() / 1000;
-  char l1[26], l2[26], l3[26], l4[26];
+// Refresh everything the pages read. Cheap, and it keeps the screen code free
+// of any reaching back into the rest of the firmware.
+void refreshView() {
+  uint32_t now = millis();
+  g_view.batteryPct    = g_selfTest.battery_pct;
+  g_view.uptimeSec     = now / 1000;
+  g_view.packets       = g_packetsSeen;
+  g_view.rows          = LogFile::rowsWritten();
+  g_view.everHeard     = (g_lastPacketAt != 0);
+  g_view.secsSinceLast = g_view.everHeard ? (now - g_lastPacketAt) / 1000 : 0;
+  g_view.cardOk        = LogFile::healthy();
+  g_view.freeMb        = LogFile::freeMegabytes();
+  g_view.fileName      = LogFile::fileName();
+  g_view.myNode        = my_node_num;
 
-  snprintf(l1, sizeof(l1), "%s  %luh%02lum", NODE_SHORT_NAME,
-           (unsigned long)(up / 3600), (unsigned long)((up / 60) % 60));
-  snprintf(l2, sizeof(l2), "ROWS %lu  CARD %s",
-           (unsigned long)LogFile::rowsWritten(),
-           LogFile::healthy() ? "OK" : "FAIL");
-  snprintf(l3, sizeof(l3), "HEARD %lu packets", (unsigned long)g_packetsSeen);
-
-  if (g_lastPacketAt == 0) {
-    snprintf(l4, sizeof(l4), "LAST: none yet");
-  } else {
-    snprintf(l4, sizeof(l4), "LAST %lus ago",
-             (unsigned long)((millis() - g_lastPacketAt) / 1000));
+  g_view.neighbourCount = g_peerCount;
+  for (uint8_t i = 0; i < g_peerCount; i++) {
+    g_view.neighbour[i]     = g_peer[i];
+    g_view.neighbourPkts[i] = g_peerPkts[i];
+    g_view.neighbourRssi[i] = (int16_t)(g_peerRssiSum[i] / (int32_t)g_peerPkts[i]);
   }
 
-  Screen::show(l1, l2, l3, l4);
-  g_screenOffAt = millis() + SCREEN_WAKE_MS;
+  // The heard check goes green once anything has ever been heard, not only
+  // during the startup listen — a node that finds its neighbours late is
+  // working, and should stop showing a fault.
+  g_view.ok[Screen::CHK_HEARD] = (g_peerCount > 0);
+  g_view.ok[Screen::CHK_CARD]  = LogFile::healthy();
 }
 
-// Debounced, edge-triggered. A held button must not repaint continuously —
-// that would put the display on the bus far more than intended.
+// Debounced, edge-triggered. A held button must not page continuously, and a
+// repaint must not happen more often than a person can read.
 void serviceButton(uint32_t now) {
   bool down = (digitalRead(BUTTON_PIN) == LOW);
 
@@ -102,7 +141,15 @@ void serviceButton(uint32_t now) {
     if (now - g_buttonChangedAt > 40) {
       g_buttonChangedAt = now;
       g_buttonWasDown = down;
-      if (down) showRunningSummary();
+      if (down) {
+        // First press wakes the screen where it was left; each further press
+        // goes one page deeper.
+        if (g_screenOffAt == 0) Screen::wake();
+        else g_page = (uint8_t)((g_page + 1) % Screen::PAGE_COUNT);
+        refreshView();
+        Screen::page(g_page, g_view);
+        g_screenOffAt = now + SCREEN_WAKE_MS;
+      }
     }
     return;
   }
@@ -179,12 +226,24 @@ void setup() {
   }
   Serial.println("----------------------------------------");
 
-  char l1[26], l2[26], l3[26], l4[26];
-  SelfTest::toScreen(result, l1, l2, l3, l4);
-  Screen::show(l1, l2, l3, l4);
-  g_screenOffAt = millis() + 30000;
+  g_selfTest = result;
+  g_view.verdict = SelfTest::verdict(result);
+  g_view.ok[Screen::CHK_CARD]  = result.card_writable;
+  g_view.ok[Screen::CHK_RADIO] = result.radio_ok;
+  g_view.ok[Screen::CHK_POS]   = result.fixed_position;
+  g_view.ok[Screen::CHK_CLOCK] = result.clock_set;
+  g_view.ok[Screen::CHK_HEARD] = (result.heard_count > 0);
+  g_view.region = SelfTest::regionName(result.region);
+  g_view.preset = SelfTest::presetName(result.preset);
+  g_view.hops   = result.hop_limit;
+  g_view.lat    = result.lat;
+  g_view.lon    = result.lon;
 
   g_booting = false;
+  refreshView();
+  Screen::page(0, g_view);
+  g_page = 0;
+  g_screenOffAt = millis() + 30000;
   g_lastStatus = millis();
   g_lastReport = millis();
 }
