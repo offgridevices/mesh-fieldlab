@@ -238,6 +238,48 @@ def test_a_node_deployed_without_its_coordinate_is_caught():
     assert "BOOT_POSITION" in error_codes(validate_text(text))
 
 
+def _boot_with(**extra) -> str:
+    pairs = {
+        "fw": "2.5.4", "preset": "LONG_FAST", "boot": "1",
+        "lat": "39.8283", "lon": "-98.5795", "alt": "0", "ant": "stock",
+    }
+    pairs.update({k: str(v) for k, v in extra.items()})
+    return row(S.ROW_BOOT, extra=S.format_extra(pairs))
+
+
+@pytest.mark.parametrize("key", ["st_card", "st_write", "st_radio", "st_pos"])
+def test_a_failed_startup_check_is_reported_from_the_file(key):
+    # The screen said so at the time; weeks later the file has to say it too.
+    text = make_file(_boot_with(**{key: 0}), row(S.ROW_PKT))
+    assert "SELFTEST" in error_codes(validate_text(text))
+
+
+def test_a_clock_that_was_never_set_is_a_warning_not_a_failure():
+    result = validate_text(make_file(_boot_with(st_clock=0), row(S.ROW_PKT)))
+    assert result.ok
+    assert "SELFTEST" in codes(result)
+
+
+def test_hearing_nothing_at_startup_is_flagged():
+    result = validate_text(make_file(_boot_with(st_heard=0), row(S.ROW_PKT)))
+    assert result.ok
+    assert "SELFTEST" in codes(result)
+
+
+def test_passing_startup_checks_say_nothing():
+    text = make_file(
+        _boot_with(st_card=1, st_write=1, st_radio=1, st_pos=1, st_clock=1, st_heard=3),
+        row(S.ROW_PKT, dev_rx_time=1786000000),
+    )
+    assert "SELFTEST" not in codes(validate_text(text))
+
+
+def test_files_written_before_the_startup_check_existed_still_read():
+    result = validate_text(make_file(_boot_with(), row(S.ROW_PKT)))
+    assert result.ok
+    assert "EXTRA_MISSING" not in error_codes(result)
+
+
 def test_a_reported_card_failure_is_an_error():
     extra = S.format_extra({"rows": "10", "sd_ok": "0", "heap": "1000"})
     text = make_file(row(S.ROW_BOOT), row(S.ROW_STATUS, uptime_ms=60000, extra=extra))

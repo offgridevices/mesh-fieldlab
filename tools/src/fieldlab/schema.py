@@ -129,14 +129,25 @@ class RowSpec:
 EXTRA_SPECS: dict[str, RowSpec] = {
     # Written once at startup: everything needed to interpret the rest of the
     # file without consulting a notebook.
+    #
+    # The st_* keys record what the boot self-test found. They are optional so
+    # that files written before the display existed still read, but firmware
+    # that runs the test should always write them: they are the only durable
+    # record of what the screen said, and nobody remembers by the time the
+    # card is read. st_heard counts neighbours heard during the boot listen.
     ROW_BOOT: RowSpec(
         required=frozenset({"fw", "preset", "boot", "lat", "lon", "alt", "ant"}),
-        optional=frozenset({"name", "region", "hw", "libver"}),
+        optional=frozenset(
+            {
+                "name", "region", "hw", "libver", "batt", "disp",
+                "st_card", "st_write", "st_radio", "st_pos", "st_clock", "st_heard",
+            }
+        ),
     ),
     # Written every 60 s: proof the node was alive and the card was working.
     ROW_STATUS: RowSpec(
         required=frozenset({"rows", "sd_ok", "heap"}),
-        optional=frozenset({"drops", "errs"}),
+        optional=frozenset({"drops", "errs", "batt"}),
     ),
     # Periodic dump of what the radio believes about its neighbours.
     ROW_NODE: RowSpec(

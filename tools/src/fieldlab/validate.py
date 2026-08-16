@@ -429,6 +429,7 @@ class _Checker:
             self.summary.firmware = pairs.get("fw")
             self.summary.preset = pairs.get("preset")
             self._check_boot_position(pairs, lineno)
+            self._check_boot_selftest(pairs, lineno)
         elif row_type == S.ROW_STATUS:
             self._check_status(pairs, int(nums["uptime_ms"]), lineno)
 
@@ -450,6 +451,34 @@ class _Checker:
             )
         elif not (-90 <= lat <= 90 and -180 <= lon <= 180):
             self.err("BOOT_POSITION", f"lat/lon out of range: {lat}, {lon}", lineno)
+
+    def _check_boot_selftest(self, pairs: dict[str, str], lineno: int) -> None:
+        """Surface what the node already knew was wrong when it started.
+
+        The self-test result is on screen for thirty seconds and then gone.
+        Re-reporting it here means a file can be judged weeks later without
+        anyone having to remember what they saw in a field.
+        """
+        failed = {
+            "st_card":  (ERROR, "the card would not mount"),
+            "st_write": (ERROR, "the card mounted but would not accept a test write"),
+            "st_radio": (ERROR, "the radio did not answer on the serial link"),
+            "st_pos":   (ERROR, "no fixed position was set, so these rows cannot be tied to a place"),
+            "st_clock": (WARNING, "the clock was never set, so rows are only relative to boot"),
+        }
+        for key, (level, message) in failed.items():
+            if pairs.get(key) == "0":
+                issue = self.err if level == ERROR else self.warn
+                issue("SELFTEST", f"the node reported at startup that {message}", lineno)
+
+        heard = pairs.get("st_heard")
+        if heard is not None and heard.isdigit() and int(heard) == 0:
+            self.warn(
+                "SELFTEST",
+                "the node heard no other node during its startup listen; if that was "
+                "still true an hour later this file has nothing in it",
+                lineno,
+            )
 
     def _check_status(self, pairs: dict[str, str], uptime: int, lineno: int) -> None:
         if pairs.get("sd_ok") == "0":

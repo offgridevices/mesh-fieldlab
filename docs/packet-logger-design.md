@@ -152,6 +152,9 @@ The change will be offered upstream once it has proven itself in a real multi-no
 | 915 MHz whip antenna | Same model on all four within a run |
 | U.FL → SMA pigtail | |
 | LiPo ~2000 mAh, JST-PH 2.0 | Protected cell |
+| 0.91" 128×32 OLED, SSD1306, I²C | Status display. Four-pin module; must accept 3.3 V |
+| SPST slide switch, ≥1 A | Inline on the battery positive lead. Recessed or guarded |
+| Momentary push button | Wakes the display. Panel-mounted, beside the switch |
 | 100 µF electrolytic × 2, 0.1 µF ceramic × 2 | One pair at the logger, one at the card |
 | 10 kΩ × 2 | Contingency only — MISO and CS pull-ups if mounts prove flaky |
 
@@ -174,6 +177,25 @@ The change will be offered upstream once it has proven itself in a real multi-no
 | CS | D3 | 21 |
 | 3V3, GND | 3V3, GND | — |
 
+| OLED (SSD1306) | XIAO | GPIO |
+|---|---|---|
+| SDA | D4 | 22 |
+| SCL | D5 | 23 |
+| VCC, GND | 3V3, GND | — |
+
+| Panel control | XIAO | GPIO |
+|---|---|---|
+| Momentary button, other leg to GND | D0 | 0 |
+| Slide switch | *not wired to the logger* — see §5.3 | — |
+
+**The display is on I²C, deliberately.** The C6 has exactly one hardware SPI bus and the card already owns it. Putting the display on a separate two-wire bus means a dead screen, a shorted display wire, or a display library that misbehaves cannot disturb a card write. The card's job is the only one that matters after the node is walked away from.
+
+The button uses the internal pull-up and reads low when pressed; no external resistor.
+
+**Do not use the XIAO's own BOOT button for this.** It is the boot-select strapping pin, so holding it while the power switch is flicked on puts the board into firmware-update mode instead of logging — a silent failure in exactly the situation the switch creates. It is also unreachable once the enclosure is sealed.
+
+Pins after all of the above: **D1 and D2 spare.**
+
 Cross-connect rule: each device's transmit goes to the other's receive. Getting this backwards is the most common cause of "no data".
 
 Cover the BOOT pad with Kapton so a stray strand cannot bridge to it.
@@ -182,7 +204,15 @@ Cover the BOOT pad with Kapton so a stray strand cannot bridge to it.
 
 ### 5.3 Power
 
-One battery per node, on the radio's `P2` connector. The logger and card run from the radio's 3.3 V rail via `J6`.
+One battery per node, on the radio's `P2` connector. The logger, card and display all run from the radio's 3.3 V rail via `J6`.
+
+**The switch goes in the battery's positive lead, between the cell and `P2`** — not anywhere on the logger. It cuts power to the whole node at once, which is the point: everything stops together and the log simply ends.
+
+Three consequences worth knowing before the first field day:
+
+- **USB overrides it.** Plugging USB into the radio powers the node whether the switch is on or off. On the bench you will forget this and conclude the switch is broken.
+- **Charging needs the switch on.** With it off, the radio's charger is disconnected from the cell.
+- **Power-cycling is a normal operation, not a fault.** Each boot opens a new file with an incremented count in its name, so nothing is ever overwritten and no session is lost by turning a node off and on. This is why the boot counter exists.
 
 Why single-supply beats a split one: only one connector ever sees a battery, so the polarity check happens once; and if power fails, everything stops together and the log simply ends — rather than the logger dying silently while the radio keeps transmitting.
 
@@ -191,7 +221,10 @@ Why single-supply beats a split one: only one connector ever sees a battery, so 
 | RAK4631 + base, mostly receiving | 20–35 mA | 130 mA transmit, ~1 s bursts |
 | XIAO at 80 MHz, radios off | 20–35 mA | — |
 | SD module, one write per 2 s | 5–15 mA | 30–100 mA, few-ms bursts |
-| **Total** | **design to 80 mA** | ~265 mA worst case |
+| OLED, blanked after boot | <0.1 mA | 5–8 mA while displaying |
+| **Total** | **design to 80 mA** | ~275 mA worst case |
+
+The display is the one part that is switched off in software rather than left running. It is lit for the thirty-second boot test and for ten seconds per button press; the rest of the session it is asleep and draws microamps. Left permanently lit it would add roughly a tenth to the node's total draw for information nobody is standing there to read.
 
 The base board's 3.3 V rail is rated 750 mA, so worst case is about a third of budget.
 
@@ -201,6 +234,7 @@ Estimated runtime on 2000 mAh, derated for real capacity, cutoff voltage and sum
 
 - Battery voltage must not exceed **4.3 V** — base board absolute maximum.
 - **The RAK19003 battery connector is reverse-polarity versus the common hobby JST-PH pinout.** Confirm with a meter before every first connection. Label every battery.
+- **Adding the switch means cutting a battery lead**, which is a fresh opportunity to get that polarity wrong on a connector that is already backwards. Cut and splice one lead at a time so the two are never both open, keep the switch in the positive leg, sleeve the joint, and meter the connector again afterwards. Never cut both leads at once — a LiPo with two bare ends is a short waiting for a workbench.
 - First power-up on a **current-limited bench supply**, never a LiPo. Set 3.9 V, 200 mA limit; expect 20–60 mA. Pinned at the limit means a short; near zero means an open or reversed connection.
 - **Never plug USB into the logger board while it is being fed 3.3 V from the radio.** One source at a time. Charging via the radio's USB is fine.
 - **Never power the radio with no antenna attached.** Transmit power reflects into the amplifier, and the measurement is invalid anyway.
@@ -244,6 +278,7 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 | Row | Written | Required in `extra` |
 |---|---|---|
 | `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
+| `BOOT` also carries | optionally | `st_card`, `st_write`, `st_radio`, `st_pos`, `st_clock`, `st_heard`, `batt`, `disp` — what the boot self-test (§9.1) found |
 | `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
 | `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
 
@@ -254,6 +289,8 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 An **error** means the file cannot be trusted: a wrong header, an impossible value, a hop count that contradicts itself, a node apparently receiving its own transmission, packets that arrived over MQTT rather than the air, a fixed position left at 0,0. Analysing a file with errors produces numbers that look reasonable and mean nothing.
 
 A **warning** means the file is readable but something is worth knowing: a truncated last row where the node lost power mid-write, a gap where the status heartbeat stopped, a link with too few packets to take a median from.
+
+The checker also re-reports whatever the boot self-test found, so a file can be judged weeks later without anyone having to remember what the screen said in the field.
 
 Run it on the card before leaving the site:
 
@@ -318,8 +355,9 @@ Save `meshtastic --info` for every node alongside the logs. Config drift between
 
 ```
 setup()
+  init display; if it does not answer, carry on regardless — see below
   read and increment boot counter in NVS
-  mount SD; on failure LED fast-blink, retry every 5 s, never proceed silently
+  run the boot self-test (§9.1), showing each result as it lands
   open /LOG_<SHORTNAME>_<BOOTCOUNT>.csv, write header and BOOT row
   init serial to the radio at 38400, register the packet-metadata callback
   request node report
@@ -330,8 +368,35 @@ loop()
   flush every 5 s or 10 rows, whichever comes first
   every 60 s: STATUS row
   every 300 s: refresh node report
+  on button press: wake display 10 s with the running summary, then blank
   LED: slow blink healthy | double-blink packet logged recently | fast continuous SD failure
 ```
+
+### 9.1 The boot self-test
+
+The node is switched on, watched for half a minute, and walked away from. That half minute is the only chance to notice a problem before it costs a session, so the test answers the questions that are expensive to get wrong — not merely "did it start".
+
+Each line appears as its check completes, so a hang is visible at the step that hung.
+
+| Check | What it proves | Failure means |
+|---|---|---|
+| Card mounts | The socket and wiring work | Reseat the card |
+| **A row is written, flushed, and read back** | The card actually accepts data | A card that mounts but cannot write is the worst failure mode there is — it looks healthy for hours |
+| Free space, and hours it will hold | The session fits | Swap the card |
+| Radio answers on the serial link | Wiring, baud rate and PROTO mode are all correct at once | See §8; this is the single most common setup failure |
+| Region, preset, hop limit | This node matches the others | Config drift silently invalidates every comparison |
+| Fixed position set, and its value | The rows can be tied to a place | A node logging from 0,0 measures nothing usable |
+| Clock set | Rows can be lined up against the other nodes | Fall back to recording the start time by hand |
+| Battery voltage, estimated hours | The node outlives the session | Swap the cell |
+| **Which other nodes were heard in 30 s, and how strongly** | This node is actually in range | A link that is dead at drop-off is dead all day |
+
+Then `READY`, the filename, and the display blanks.
+
+**The last check only works for nodes placed after the first.** Node 1 hears nothing at its own drop-off because nothing else is on yet. Turn nodes on in placement order and walk back past the earlier ones, pressing the button to confirm they picked up their neighbours.
+
+**A failed check does not stop the node.** It is shown, recorded in the `BOOT` row, and logging starts anyway. A node logging with a bad clock is worth far more than a node refusing to start; the analysis can be told about a known-bad field, but it cannot invent data that was never captured.
+
+**The display is optional at runtime.** If it does not answer at startup the firmware notes it and carries on — a failed screen must never cost a session. The LED remains the running indicator regardless.
 
 Non-negotiable for unattended use:
 
@@ -342,6 +407,8 @@ Non-negotiable for unattended use:
 Power management: WiFi off, Bluetooth off, CPU at 80 MHz. **No deep sleep** — the logger must continuously service the serial stream.
 
 Per-node settings live in one block at the top of `main.cpp`: short name, pins, baud, flush thresholds, schema version. One edit per unit.
+
+The `BOOT` row records the self-test outcome alongside the configuration, so a file can be judged later without anyone having to remember what the screen said at the time.
 
 ## 10. Generating traffic to measure
 
@@ -399,10 +466,12 @@ Build **one** complete node and validate it end to end before assembling the oth
 5. Unmodified library, two boards on a desk — proves handshake, heartbeat and framing before touching library internals.
 6. Forked library, RSSI and SNR printed to the console. From across a room expect −30 to −60 dBm and +5 to +12 dB.
 7. Add card writing. Power-cycle mid-write repeatedly; confirm no corruption and a fresh file per boot.
-8. Measure actual current draw and replace the estimates in §5.3.
-9. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
-10. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
-11. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance.
+8. Add the display and the boot self-test. Prove each check **fails** as designed, not just that it passes: pull the card, unplug the radio's serial line, clear the fixed position, and confirm the screen says so and the node still starts logging. A self-test that only ever shows green has not been tested.
+9. Fit the switch and the button. Confirm the node survives fifty power cycles, that a press wakes the display and it blanks again, and that the button does nothing harmful if held down at power-up.
+10. Measure actual current draw and replace the estimates in §5.3. Measure it twice — display lit and display blanked — so the cost of the screen is a number rather than an assumption.
+11. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
+12. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
+13. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance, and that the switch and button are usable through the enclosure with cold hands.
 
 A 3.3 V USB-serial adapter is required. **A 5 V logic adapter will damage the nRF52840.**
 
@@ -440,8 +509,10 @@ Determined only with hardware in hand:
 1. Whether this RAK19003 revision maps `J7` to 16/15 or 20/19
 2. Whether the CLI pushes device time on connect
 3. Whether these microSD modules need added pull-ups on this bus
-4. Real per-node current draw — §5.3 is estimated
+4. Real per-node current draw — §5.3 is estimated, lit and blanked
 5. Which antenna model shipped with the radio kits, for the baseline record
+6. The OLED's I²C address — `0x3C` on most of these modules, `0x3D` on some. Scan the bus on the first unit and record it; a wrong address looks exactly like a dead screen
+7. Whether the OLED module's regulator is happy at 3.3 V — many are sold as "3.3–5 V" but a few assume 5 V and are dim or dead on a 3.3 V rail. There is no 5 V rail here
 
 Each is written so it is a one-line change, not a rewrite.
 

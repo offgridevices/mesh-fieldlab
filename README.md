@@ -34,7 +34,8 @@ This repository is **measurement and analysis only**. Concretely, that means:
 
 - **Nodes:** RAK WisBlock / RAK4631 running Meshtastic, US915 region
 - **Logger:** Seeed XIAO ESP32-C6 wired to the node's UART header, writing to a microSD card. It speaks the Meshtastic client protocol over serial — the same one a phone uses — so the node needs no modified firmware.
-- **Power:** a single LiPo on the node's battery connector feeds both boards; there is no second supply and no 5 V rail.
+- **Status display:** a small OLED runs a self-test at power-up — card writable, radio answering, region and preset correct, position and clock set, which neighbours are audible — then blanks. A button wakes it for ten seconds. This is what replaces having a phone at each node.
+- **Power:** a single LiPo on the node's battery connector feeds both boards; there is no second supply and no 5 V rail. A switch in the battery lead turns the whole node on and off; each power-up starts a new log file, so cycling a node is safe.
 - Anything else that speaks the Meshtastic serial protocol should work.
 
 See [docs/packet-logger-design.md](docs/packet-logger-design.md) for the wiring, file format, and validation procedure.
@@ -49,6 +50,7 @@ Expected dependency set:
 |---|---|---|
 | `meshtastic` | Node communication (Python tooling) | GPL-3.0 |
 | `Meshtastic-arduino` | Node communication (logger firmware) | GPL-3.0 |
+| `U8g2` | Status display (logger firmware) | BSD-2-Clause |
 | `pyserial` | Serial transport | BSD-3-Clause |
 | `pandas` | Log analysis | BSD-3-Clause |
 | `matplotlib` | Plots | PSF-based |
