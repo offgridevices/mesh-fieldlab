@@ -62,7 +62,7 @@ The log validator in `tools/` deliberately has **no runtime dependencies at all*
 
 The firmware builds against [`offgridevices/Meshtastic-arduino`](https://github.com/offgridevices/Meshtastic-arduino), a fork of the upstream library, pinned to an exact commit.
 
-The fork exists for one reason: upstream decodes each packet's RSSI and SNR and then discards them — none of its three callbacks pass those fields to the caller, and no setting changes that. Since RSSI and SNR are the entire measurement, the fork adds one additional callback carrying the full packet metadata. Existing callbacks are untouched. The change will be offered upstream once it has been validated in the field.
+The fork exists for one reason: upstream decodes each packet's RSSI and SNR and then discards them — none of its three callbacks pass those fields to the caller, and no setting changes that. Since RSSI and SNR are the entire measurement, the fork adds one additional callback carrying the full packet metadata, along with an example sketch and a host-side test suite that runs without a radio. Existing callbacks and return values are untouched. The change will be offered upstream once it has been validated in the field.
 
 The fork remains GPL-3.0, and its commit history is the record of what was modified.
 

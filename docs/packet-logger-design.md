@@ -119,23 +119,25 @@ typedef struct {
 void set_packet_meta_callback(void (*cb)(const mt_packet_meta_t *meta));
 ```
 
-Roughly 30 lines across two files. **Existing callback signatures are untouched**, so the library's own examples still compile and future merges stay simple.
+Roughly 30 lines across two files. **Existing callback signatures and return values are untouched**, so the library's own examples still compile and future merges stay simple. With no callback registered the added cost is one null check per packet.
+
+**Status: written, and pinned below.** The change also ships an example sketch and a host-side test suite that builds the library against a stub Arduino layer, so the callback can be exercised on a development machine. Twenty-eight checks cover field-by-field propagation, direct versus relayed receptions, encrypted payloads, unrecognised port numbers, and registering and unregistering the callback. Passing them says nothing about real hardware — that is what §12 is for — but it means the first bench session starts from code already known to compile and behave.
 
 ### 4.2 Delivered as a fork
 
 The change lives in a **fork of `Meshtastic-arduino` under the `offgridevices` org**, and this repository references it pinned to an exact commit:
 
 ```ini
-lib_deps = https://github.com/offgridevices/Meshtastic-arduino.git#<commit-sha>
+lib_deps = https://github.com/offgridevices/Meshtastic-arduino.git#8f17d8010a916ca1307dc9ae0da31bb4964b17d7
 ```
 
 This keeps the repository's no-vendored-source rule intact — what is committed here is a reference, not somebody else's code. It also satisfies GPL-3.0's requirement that modified versions carry clear notice of change, structurally: the fork's commit history *is* the notice.
 
 **Pin to a commit, never a branch.** A floating reference means the firmware that produced a given day's measurements can no longer be rebuilt, and reproducibility is most of the reason to work this way.
 
-**Fork base is tag `v0.0.7`.** The library's master is exactly one commit ahead of that tag, and that commit only bumps a GitHub Actions version — there is no functional difference. Worth knowing: the library has had no functional changes in twenty months.
+**Fork base is upstream `master` at `04af41a`**, not the `v0.0.7` tag. The tag predates a substantial May 2025 rework (upstream #42) that restructured packet handling and added the portnum and encrypted callbacks; the change described above builds directly on that structure and would be considerably more awkward against the tag. Most recent upstream source change: January 2026.
 
-The change will be offered upstream once it has proven itself in a real multi-node field run.
+The change will be offered upstream once it has proven itself in a real multi-node field run. Upstream does merge outside contributions — the rework above came from a community pull request — so this has a reasonable chance of being accepted rather than living as a fork forever.
 
 ## 5. Hardware
 
