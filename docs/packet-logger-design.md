@@ -162,26 +162,36 @@ The change will be offered upstream once it has proven itself in a real multi-no
 
 | RAK19003 | Signal | XIAO ESP32-C6 | GPIO |
 |---|---|---|---|
-| J7 pin 2 | TX1 | **D7** (RX) | 17 |
-| J7 pin 1 | RX1 | **D6** (TX) | 16 |
+| J7 pin 2 | TX | **D7** (RX) | 17 |
+| J7 pin 1 | RX | **D6** (TX) | 16 |
 | J7 pin 3 | GND | GND | — |
 | J6 pin 1 | VDD 3.3 V | 3V3 | — |
 | J6 pin 2 | GND | GND | — |
 | J7 pin 4 | BOOT | **do not connect** | — |
 
+**Wire by the printed label, not by these pin numbers.** RAK changed which UART reaches `J7` between board revisions and did not update the datasheet: Rev B silkscreens `RX1`/`TX1`, Rev D and later silkscreen `RX0`/`TX0`. The positions and the wiring are identical — only the radio's configuration differs, which is §8.
+
+**`J6` carries `VDD`, which is the always-on 3.3 V rail.** The switched rail is `3V3_S`, controlled by `IO2` from the Core module, and it feeds the sensor slots. Powering the logger from `VDD` means the radio's own power management cannot cut it. Worth confirming with a meter on the first board anyway.
+
+The `RAK4630` marking on the Core module is the radio stamp soldered to it; the module as a whole is the `RAK4631`, which is the Meshtastic build to flash, and it needs the **Arduino bootloader, not RUI3**.
+
 | microSD module | XIAO | GPIO |
 |---|---|---|
-| SCK | D8 | 19 |
+| CLK *(labelled SCK on some modules)* | D8 | 19 |
 | MISO | D9 | 20 |
 | MOSI | D10 | 18 |
 | CS | D3 | 21 |
 | 3V3, GND | 3V3, GND | — |
 
+**The module must be 3.3 V native.** Many cheap microSD breakouts carry an `AMS1117` regulator and a `74LVC125` level shifter and expect 5 V, which does not exist anywhere in this build. A module whose only power pin is labelled `3V3` and which has no regulator on it is the right kind.
+
 | OLED (SSD1306) | XIAO | GPIO |
 |---|---|---|
 | SDA | D4 | 22 |
-| SCL | D5 | 23 |
+| SCL *(labelled `SCK` on some modules — it is the I²C clock, not SPI)* | D5 | 23 |
 | VCC, GND | 3V3, GND | — |
+
+**Check the power and ground order before wiring.** These modules ship as `GND VCC SCL SDA` and as `VCC GND SCL SDA`, and reversing the first two is the usual way to destroy one.
 
 | Panel control | XIAO | GPIO |
 |---|---|---|
@@ -334,7 +344,7 @@ Identical on all four nodes except name and position.
 meshtastic --port <PORT> \
   --set serial.enabled true \
   --set serial.mode PROTO \
-  --set serial.txd 16 --set serial.rxd 15 \
+  --set serial.txd 20 --set serial.rxd 19 \
   --set serial.baud BAUD_38400 \
   --set position.gps_mode NOT_PRESENT \
   --set lora.region US --set lora.modem_preset LONG_FAST \
@@ -346,7 +356,14 @@ Notes that will cost you an afternoon if missed:
 - **Baud must be set explicitly on both sides.** The firmware default is 38400; the Arduino library's own default is 9600. A mismatch produces silent garbage.
 - `override_console_serial_port` is valid **only** with NMEA and CALTOPO. With PROTO it produces a config error and the module will not start. Leave it false.
 - `NOT_PRESENT` matters because the same UART routes to sensor slots C and D.
-- **The pin numbers are ambiguous.** Meshtastic's documentation gives 16/15 for some RAK19003 revisions and 20/19 for others. Try 16/15 first; if no stream appears, switch. It is a config change, not a rewiring. **Record which works.**
+- **The pin numbers depend on the base board revision, and the revision is printed on the board.** RAK moved the UART that reaches `J7` at Rev D: Rev B exposes UART1 there, Rev D and later expose UART0. The wiring is identical; only these two numbers change.
+
+  | RAK19003 revision | `J7` silkscreen | `serial.rxd` | `serial.txd` |
+  |---|---|---|---|
+  | Rev B | `RX1` / `TX1` | 15 | 16 |
+  | **Rev D, Rev E** | `RX0` / `TX0` | **19** | **20** |
+
+  The command above is set for **Rev E**. This was previously an open item to be resolved by trial; it is resolved by reading the silkscreen. Confirmed against the RAKwireless forum thread on the Rev E schematic change, Meshtastic issue #2267, and Meshtastic's own serial-module documentation, which gives 20/19 for "RAK19003 v2 variants" and 16/15 for the RAK19007.
 - Keep the modem preset identical across all nodes and all runs. Changing spreading factor mid-experiment invalidates every comparison.
 
 Save `meshtastic --info` for every node alongside the logs. Config drift between nodes is the most common invisible way to ruin a test.
@@ -467,7 +484,7 @@ Build **one** complete node and validate it end to end before assembling the oth
 
 1. Continuity and short checks with everything unpowered — 3.3 V to ground must read open.
 2. First power-up on the current-limited bench supply.
-3. Prove the PROTO stream exists using a 3.3 V USB-serial adapter and `meshtastic --listen`, with no logger board involved. **Record whether 16/15 or 20/19 works.** If PROTO refuses but NMEA produces readable sentences on the same wiring, the wiring is fine and the problem is protocol-side.
+3. Prove the PROTO stream exists using a 3.3 V USB-serial adapter and `meshtastic --listen`, with no logger board involved. The pin numbers come from the board revision (§8) rather than from trial. If PROTO refuses but NMEA produces readable sentences on the same wiring, the wiring is fine and the problem is protocol-side.
 4. Verify whether the CLI pushes device time.
 5. Unmodified library, two boards on a desk — proves handshake, heartbeat and framing before touching library internals.
 6. Forked library, RSSI and SNR printed to the console. From across a room expect −30 to −60 dBm and +5 to +12 dB.
@@ -518,7 +535,7 @@ The forked library remains GPL-3.0 and is referenced, not copied — see §4.2. 
 
 Determined only with hardware in hand:
 
-1. Whether this RAK19003 revision maps `J7` to 16/15 or 20/19
+1. ~~Whether this RAK19003 revision maps `J7` to 16/15 or 20/19~~ — **resolved by the board revision, see §8.** The boards in hand are Rev E, so 19/20
 2. Whether the CLI pushes device time on connect
 3. Whether these microSD modules need added pull-ups on this bus
 4. Real per-node current draw — §5.3 is estimated, lit and blanked
