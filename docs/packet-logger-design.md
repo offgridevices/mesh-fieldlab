@@ -485,6 +485,16 @@ Do not mix antenna models within a run. When comparing, **interleave A/B/A/B** r
 
 Build **one** complete node and validate it end to end before assembling the other three. A wiring error found on unit one costs an hour; found on unit four it costs four.
 
+**Confirmed on the first unit, 16 August 2026** — logger board only, radio not yet powered:
+
+- Firmware builds, flashes and runs on the XIAO ESP32-C6.
+- The card mounts and passes the write-and-read-back test. 939 MB free reported.
+- The OLED is found on the I²C bus and shows the self-test.
+- The button wakes the running summary and the screen blanks again.
+- With the radio absent the self-test reports it and the node **carries on into the loop rather than halting**, which is the degradation behaviour the whole design depends on.
+
+Still unproven: everything involving the radio, which is steps 3 onward.
+
 1. Continuity and short checks with everything unpowered — 3.3 V to ground must read open.
 2. First power-up on the current-limited bench supply.
 3. Prove the PROTO stream exists using a 3.3 V USB-serial adapter and `meshtastic --listen`, with no logger board involved. The pin numbers come from the board revision (§8) rather than from trial. If PROTO refuses but NMEA produces readable sentences on the same wiring, the wiring is fine and the problem is protocol-side.
