@@ -39,6 +39,15 @@
 
 #define SD_RETRY_MS         5000UL    // Remount attempts after a card failure
 
+// --- console ---------------------------------------------------------------
+// Everything the screen shows is also written to USB serial, so a node can be
+// brought up on a bench before the display exists and diagnosed later without
+// one. In the field nothing is plugged in and the writes go nowhere.
+
+#define SERIAL_ECHO          1        // boot banner, self-test, status
+#define SERIAL_ECHO_PACKETS  1        // one line per received packet
+#define SERIAL_WAIT_MS       2000UL   // bounded wait for the host to attach
+
 // --- sanity ----------------------------------------------------------------
 // A whole boot is roughly RADIO_WAIT_MS + BOOT_LISTEN_MS of standing there.
 // Much beyond a minute and people stop watching it, which defeats the point.

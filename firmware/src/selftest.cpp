@@ -1,5 +1,7 @@
 #include "selftest.h"
 
+#include <stdarg.h>
+
 #include "config.h"
 #include "screen.h"
 
@@ -29,6 +31,21 @@ void rememberHeard(uint32_t node) {
     if (g_heard[i] == node) return;
   }
   if (g_heardCount < MAX_NEIGHBOURS) g_heard[g_heardCount++] = node;
+}
+
+// The console mirrors the screen. Both are best-effort and neither is
+// required: a node with no display and no USB still logs correctly.
+void say(const char * fmt, ...) {
+#if SERIAL_ECHO
+  char line[128];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(line, sizeof(line), fmt, args);
+  va_end(args);
+  Serial.println(line);
+#else
+  (void)fmt;
+#endif
 }
 
 // Pumps the protocol without blocking the caller's sense of time.
@@ -115,6 +132,14 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
            (unsigned long)freeMb);
   Screen::show(NODE_SHORT_NAME " starting", line, "radio...", nullptr);
 
+  say("display  : %s", displayOk ? "found" : "ABSENT (carrying on)");
+  say("card     : %s", cardMounted ? "mounted" : "NOT MOUNTED");
+  say("card test: %s", cardWritable ? "wrote and read back a row"
+                                    : "FAILED — will not record");
+  if (cardMounted) say("free     : %lu MB", (unsigned long)freeMb);
+  say("radio    : waiting up to %lu s for an answer...",
+      (unsigned long)(RADIO_WAIT_MS / 1000));
+
   // --- the radio ------------------------------------------------------------
   // my_node_num stays zero until the radio has answered, so it doubles as the
   // proof that wiring, baud rate and PROTO mode are all correct at once.
@@ -128,9 +153,13 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   if (!r.radio_ok) {
     Screen::show(NODE_SHORT_NAME " starting", line, "RADIO: NO ANSWER",
                  "check wiring + PROTO");
+    say("radio    : NO ANSWER");
+    say("           check TX/RX are crossed, the baud rate matches,");
+    say("           and the Serial module is enabled in PROTO mode");
     // No point listening for neighbours through a link that is not there.
     return r;
   }
+  say("radio    : answered — node %lu", (unsigned long)my_node_num);
 
   // Config arrives across the same exchange; give it a moment to land.
   serviceUntil(millis() + 2000);
@@ -147,6 +176,17 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
            presetName(r.preset), regionName(r.region));
   Screen::show(NODE_SHORT_NAME " starting", line, "listening 30s...", nullptr);
 
+  if (r.have_config) {
+    say("settings : region %s, preset %s, hop limit %u, tx %s",
+        regionName(r.region), presetName(r.preset),
+        (unsigned)r.hop_limit, r.tx_enabled ? "on" : "OFF");
+    say("position : %s", r.fixed_position ? "fixed position is set"
+                                          : "NOT SET — rows cannot be tied to a place");
+  } else {
+    say("settings : radio answered but sent no config");
+  }
+  say("listening: %lu s for neighbours...", (unsigned long)(BOOT_LISTEN_MS / 1000));
+
   // --- who can we hear ------------------------------------------------------
   // The report also carries our own entry, which is where the position and
   // battery come from — the radio owns the battery, not the logger.
@@ -159,6 +199,14 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   r.lat         = g_lat;
   r.lon         = g_lon;
   r.alt         = g_alt;
+
+  say("heard    : %u neighbour%s", (unsigned)r.heard_count,
+      r.heard_count == 1 ? "" : "s");
+  for (uint8_t i = 0; i < g_heardCount; i++) {
+    say("           node %lu", (unsigned long)g_heard[i]);
+  }
+  say("clock    : %s", r.clock_set ? "set" : "NOT SET — rows are relative to boot only");
+  say("battery  : %u%%", (unsigned)r.battery_pct);
   return r;
 }
 

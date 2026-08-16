@@ -38,6 +38,20 @@ void onPacket(const mt_packet_meta_t * meta) {
   g_packetsSeen++;
   g_lastPacketAt = millis();
 
+#if SERIAL_ECHO_PACKETS
+  // The same row that reaches the card, in a form a person can read. A packet
+  // arriving is the one thing you want to see immediately on a bench.
+  uint8_t hops = (meta->hop_start >= meta->hop_limit)
+                   ? (uint8_t)(meta->hop_start - meta->hop_limit) : 0;
+  Serial.printf("pkt  from %lu  %ld dBm  %.2f dB  %s%s%s\n",
+                (unsigned long)meta->from,
+                (long)meta->rx_rssi,
+                meta->rx_snr,
+                hops == 0 ? "direct" : "relayed",
+                meta->via_mqtt ? "  [MQTT — not over the air]" : "",
+                meta->is_decoded ? "" : "  [encrypted]");
+#endif
+
   if (g_booting) {
     SelfTest::notePacket(meta);
     return;
@@ -124,6 +138,12 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   Serial.begin(115200);
+  // Bounded, so a node with nothing plugged in still starts on time.
+  while (!Serial && millis() < SERIAL_WAIT_MS) delay(10);
+
+  Serial.printf("\n\n%s  logger %s  schema %d\n",
+                NODE_SHORT_NAME, LOGGER_VERSION, LOG_SCHEMA_VERSION);
+  Serial.println("----------------------------------------");
 
   // Radios off, clock down. The logger has nothing to transmit and must stay
   // awake for the serial stream, so this is all the power saving there is.
@@ -152,7 +172,12 @@ void setup() {
     char extra[256];
     SelfTest::toExtra(result, bootCount, extra, sizeof(extra));
     LogFile::writeBoot(extra);
+    Serial.printf("logging  : %s\n", LogFile::fileName());
+  } else {
+    Serial.println("logging  : NOT RECORDING — the card is unusable");
+    Serial.println("           the node still runs, so the fault is visible");
   }
+  Serial.println("----------------------------------------");
 
   char l1[26], l2[26], l3[26], l4[26];
   SelfTest::toScreen(result, l1, l2, l3, l4);
@@ -173,6 +198,13 @@ void loop() {
   if (now - g_lastStatus >= STATUS_INTERVAL_MS) {
     g_lastStatus = now;
     LogFile::writeStatus(ESP.getFreeHeap());
+#if SERIAL_ECHO
+    Serial.printf("status   %lu min  %lu packets  %lu rows  card %s\n",
+                  (unsigned long)(now / 60000),
+                  (unsigned long)g_packetsSeen,
+                  (unsigned long)LogFile::rowsWritten(),
+                  LogFile::healthy() ? "ok" : "FAILED");
+#endif
   }
 
   if (now - g_lastReport >= NODE_REPORT_MS) {
