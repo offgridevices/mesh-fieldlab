@@ -9,17 +9,15 @@ wiring, the file format, and the bench sequence.
 
 ## Installing PlatformIO
 
-`uv tool install platformio` does **not** work: the tool environment has no
-`pip`, and PlatformIO shells out to it while installing the ESP32 toolchain.
-Use a seeded virtual environment instead.
-
 ```sh
-uv venv --seed ~/.venvs/pio
-~/.venvs/pio/bin/pip install platformio
-~/.venvs/pio/bin/pio --version
+uv tool install --with pip platformio
 ```
 
-Then either use the full path, or add `~/.venvs/pio/bin` to `PATH`.
+**The `--with pip` is required.** Plain `uv tool install platformio` appears
+to succeed and then fails partway through the first build with
+`MissingPackageManifestError`, because PlatformIO shells out to `pip` while
+installing the flashing tool's own dependencies and a uv tool environment
+has no pip in it. The error names neither pip nor the real cause.
 
 The first build downloads the toolchain and both dependencies, which takes a
 few minutes. Later builds take seconds.
