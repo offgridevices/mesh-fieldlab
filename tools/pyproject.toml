@@ -1,7 +1,7 @@
 [project]
-name = "cairn-fieldlab-tools"
+name = "mesh-fieldlab-tools"
 version = "0.1.0"
-description = "Schema, validation and analysis tooling for cairn-fieldlab packet logs"
+description = "Schema, validation and analysis tooling for mesh-fieldlab packet logs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"

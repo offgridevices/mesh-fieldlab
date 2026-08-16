@@ -1,6 +1,6 @@
 # tools
 
-Python tooling for cairn-fieldlab packet logs. Managed with [uv](https://docs.astral.sh/uv/).
+Python tooling for mesh-fieldlab packet logs. Managed with [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
