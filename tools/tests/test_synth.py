@@ -1,39 +1,126 @@
-"""The generator and the checker must agree, or neither is trustworthy."""
+"""The generator and the tools that read it must agree, or neither is trusted.
+
+The point of modelling one shared mesh rather than four independent nodes is
+that cross-file behaviour becomes testable: the same transmission appears in
+several files under one packet id, which is what deduplication, delivery share
+and asymmetry all depend on.
+"""
 
 from __future__ import annotations
 
+import pytest
+
 from fieldlab import schema as S
-from fieldlab.synth import SynthConfig, filename_for, synth_log
+from fieldlab.analyze import Session, asymmetry, link_stats, load_file
+from fieldlab.synth import MeshConfig, synth_session
 from fieldlab.validate import validate_text
 
 
-def test_generated_files_pass_the_checker():
-    config = SynthConfig()
-    result = validate_text(synth_log(config), filename_for(config))
-    assert result.errors == [], [str(i) for i in result.errors]
-    assert result.warnings == [], [str(i) for i in result.warnings]
+def test_every_generated_file_passes_the_checker():
+    for name, text in synth_session(MeshConfig()).items():
+        result = validate_text(text, name)
+        assert result.errors == [], (name, [str(i) for i in result.errors])
+        assert result.warnings == [], (name, [str(i) for i in result.warnings])
 
 
-def test_a_generated_session_contains_what_a_real_one_would():
-    config = SynthConfig(duration_s=1800, interval_s=20)
-    result = validate_text(synth_log(config), filename_for(config))
-    s = result.summary
-    assert s.by_row_type[S.ROW_BOOT] == 1
-    assert s.by_row_type[S.ROW_STATUS] >= 25
-    assert len(s.direct_links) == len(config.peers)
-    assert s.relayed_links
-    assert s.duplicate_rows > 0
-    assert s.clock_was_set
+def test_one_file_per_node():
+    files = synth_session(MeshConfig(node_count=4))
+    assert len(files) == 4
+    assert set(files) == {f"LOG_N{i}_1.csv" for i in range(1, 5)}
 
 
-def test_the_same_seed_gives_the_same_file():
-    assert synth_log(SynthConfig(seed=3)) == synth_log(SynthConfig(seed=3))
-    assert synth_log(SynthConfig(seed=3)) != synth_log(SynthConfig(seed=4))
+def test_the_same_transmission_appears_in_several_files():
+    # The property that makes a session a session rather than four monologues.
+    files = synth_session(MeshConfig(duration_s=600))
+    seen_by: dict[str, set[str]] = {}
+    for name, text in files.items():
+        for line in text.splitlines()[1:]:
+            parts = line.split(",")
+            if parts[S.COLUMN_INDEX["row_type"]] != S.ROW_PKT:
+                continue
+            seen_by.setdefault(parts[S.COLUMN_INDEX["pkt_id"]], set()).add(name)
+
+    shared = [ids for ids in seen_by.values() if len(ids) > 1]
+    assert shared, "no packet reached more than one node"
+
+
+def test_a_generated_session_analyses_into_links(tmp_path):
+    files = synth_session(MeshConfig(duration_s=3600))
+    session = Session()
+    for name, text in files.items():
+        path = tmp_path / name
+        path.write_text(text)
+        load_file(path, session)
+
+    assert session.skipped == []
+    assert len(session.nodes) == 4
+    assert session.duplicates_dropped > 0, "no flood copies to remove"
+
+    links = link_stats(session)
+    assert len(links) == 12, "four nodes should give twelve directed links"
+    assert all(s.distance_m is not None for s in links)
+    assert all(-130 < s.rssi_median < -20 for s in links)
+
+
+def test_distance_and_signal_strength_move_together(tmp_path):
+    session = Session()
+    for name, text in synth_session(MeshConfig(duration_s=3600)).items():
+        path = tmp_path / name
+        path.write_text(text)
+        load_file(path, session)
+
+    links = sorted(link_stats(session), key=lambda s: s.distance_m)
+    nearest, farthest = links[0], links[-1]
+    assert nearest.rssi_median > farthest.rssi_median, (
+        "the closest pair should read stronger than the most distant one"
+    )
+
+
+def test_the_two_directions_of_a_pair_differ(tmp_path):
+    # Real links are asymmetric. A generator that produced symmetric ones would
+    # let a broken analysis look correct.
+    session = Session()
+    for name, text in synth_session(MeshConfig(duration_s=3600)).items():
+        path = tmp_path / name
+        path.write_text(text)
+        load_file(path, session)
+
+    pairs = asymmetry(link_stats(session))
+    assert pairs
+    assert max(diff for _, _, diff, _ in pairs) > 1.0
+
+
+def test_delivery_share_is_a_fraction(tmp_path):
+    session = Session()
+    for name, text in synth_session(MeshConfig(duration_s=1800)).items():
+        path = tmp_path / name
+        path.write_text(text)
+        load_file(path, session)
+
+    for s in link_stats(session):
+        assert s.heard_fraction is not None
+        assert 0.0 < s.heard_fraction <= 1.0
+
+
+def test_the_same_seed_gives_the_same_session():
+    assert synth_session(MeshConfig(seed=3)) == synth_session(MeshConfig(seed=3))
+    assert synth_session(MeshConfig(seed=3)) != synth_session(MeshConfig(seed=4))
 
 
 def test_an_unset_clock_can_be_simulated():
-    config = SynthConfig(set_clock=False, duration_s=600)
-    result = validate_text(synth_log(config), filename_for(config))
+    files = synth_session(MeshConfig(set_clock=False, duration_s=600))
+    name, text = next(iter(files.items()))
+    result = validate_text(text, name)
     assert result.ok
     assert not result.summary.clock_was_set
     assert "NO_ABSOLUTE_TIME" in {i.code for i in result.warnings}
+
+
+@pytest.mark.parametrize("bad", [
+    MeshConfig(node_count=1),
+    MeshConfig(interval_s=0),
+    MeshConfig(duration_s=10, interval_s=60),
+])
+def test_nonsense_settings_are_refused(bad):
+    with pytest.raises(ValueError):
+        synth_session(bad)

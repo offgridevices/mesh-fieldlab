@@ -447,11 +447,15 @@ Flood routing means the same packet ID arrives via multiple relays. Dedupe on `(
 
 ### 11.3 Per-link metrics
 
-For each ordered pair, direct rows only: packet count; RSSI median, 10th and 90th percentile; the same for SNR; delivery ratio; distance from actual coordinates; elevation difference; and **asymmetry** between the two directions — real links are often several dB asymmetric.
+For each ordered pair, direct rows only: packet count; RSSI median, 10th and 90th percentile; the same for SNR; distance from actual coordinates; elevation difference; and **asymmetry** between the two directions — real links are often several dB asymmetric.
 
-Use **medians, not means.** RSSI distributions are skewed and a single multipath null wrecks a mean.
+Use **medians, not means.** RSSI distributions are skewed and a single multipath null wrecks a mean. Below ten samples the tenth and ninetieth percentiles are reported as the plain minimum and maximum, because interpolating a percentile from a handful of readings dresses up a range as a statistic.
 
 Treat **+7 dB SNR as the practical reliable-link threshold**, not the theoretical −20 dB floor.
+
+**On delivery ratio.** Nothing in these files records what was *transmitted* — only what arrived somewhere. So a true delivery rate is not recoverable, and `analyze-logs` reports instead the share of a sender's packets that reached anyone which also reached a given receiver directly. That is a useful comparison between receivers and a misleading one if read as an absolute.
+
+`analyze-logs` does all of the above, refuses files the checker rejected, and reports nodes whose configuration differs from the rest — readings across differently-configured nodes are not comparable however clean the data looks.
 
 ### 11.4 Comparing antennas
 
@@ -493,11 +497,11 @@ tools/                    Python, uv-managed
   src/fieldlab/
     schema.py             the file format; single source of truth
     validate.py           the checker; written before the firmware
-    synth.py              schema-valid sample data, for building the analysis
-    cli.py                validate-csv, synth-log
+    analyze.py            dedupe, direct-only filter, per-link metrics
+    synth.py              a whole synthetic session, for building the analysis
+    cli.py                validate-csv, analyze-logs, synth-log
     configure_node.py     applies radio config, saves --info dump
     dem_lookup.py         lat/lon -> ground elevation
-    analyze.py            dedupe, direct-only filter, per-link metrics
   tests/
 config/                   per-node --info dumps
 data/                     field logs (data/raw is gitignored)

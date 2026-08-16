@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 validate-csv = "fieldlab.cli:main"
+analyze-logs = "fieldlab.cli:analyze_main"
 synth-log = "fieldlab.cli:synth_main"
 
 [dependency-groups]

@@ -125,6 +125,33 @@ def test_the_firmware_and_this_module_agree_on_the_row_type_names():
         assert _c_macro(text, macro).strip().strip('"') == expected, macro
 
 
+def test_every_extra_key_the_firmware_writes_is_one_this_module_knows():
+    """Catches the other half of the contract: the key/value detail.
+
+    An unrecognised key is only a warning at read time, so without this a
+    firmware change could quietly make every file in a session complain — and
+    the first anyone would know is a wall of warnings after a field day.
+    """
+    sources = [
+        REPO / "firmware" / "src" / "selftest.cpp",
+        REPO / "firmware" / "src" / "logfile.cpp",
+    ]
+    if not all(p.exists() for p in sources):
+        pytest.skip("firmware not present")
+
+    known = set()
+    for spec in S.EXTRA_SPECS.values():
+        known |= spec.required | spec.optional
+
+    written = set()
+    for path in sources:
+        for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', path.read_text()):
+            written |= set(re.findall(r"\b([a-z][a-z0-9_]*)=", literal))
+
+    assert written, "found no key=value pairs in the firmware; the scan is broken"
+    assert written <= known, f"firmware writes keys the schema does not know: {sorted(written - known)}"
+
+
 def test_packet_only_columns_are_the_ones_that_describe_a_reception():
     assert "rx_snr_db" in S.PACKET_ONLY
     assert "rx_rssi_dbm" in S.PACKET_ONLY

@@ -154,56 +154,150 @@ def main(argv: list[str] | None = None) -> int:
     return EXIT_PROBLEMS if failed else EXIT_OK
 
 
+def analyze_main(argv: list[str] | None = None) -> int:
+    """`analyze-logs`: reduce a folder of cards to per-link measurements."""
+    from fieldlab.analyze import asymmetry, link_stats, load_directory
+
+    p = argparse.ArgumentParser(
+        prog="analyze-logs",
+        description=(
+            "Reduce a session to its links. Only direct receptions count — a "
+            "relayed packet measures the last hop, not the pair of nodes at its "
+            "ends. Flood copies are removed first, and every figure is a median."
+        ),
+    )
+    p.add_argument("directory", help="folder of log files from one session")
+    p.add_argument("--min-packets", type=int, default=100, metavar="N",
+                   help="mark links with fewer than N direct packets as thin (default 100)")
+    p.add_argument("--force", action="store_true",
+                   help="analyse files the checker rejected; the numbers cannot be trusted")
+    p.add_argument("--json", action="store_true", help="emit machine-readable output")
+    args = p.parse_args(argv)
+
+    session = load_directory(args.directory, force=args.force)
+    if not session.files:
+        print(f"no usable log files in {args.directory}", file=sys.stderr)
+        for path, why in session.skipped:
+            print(f"  skipped {path}: {why}", file=sys.stderr)
+        return EXIT_USAGE
+
+    links = link_stats(session)
+
+    if args.json:
+        print(json.dumps({
+            "files": session.files,
+            "skipped": [{"path": p2, "reason": r} for p2, r in session.skipped],
+            "nodes": {str(n.node): {
+                "name": n.name, "lat": n.lat, "lon": n.lon, "alt": n.alt,
+                "preset": n.preset, "region": n.region, "boot": n.boot,
+                "antenna": n.antenna,
+            } for n in session.nodes.values()},
+            "config_mismatches": session.config_mismatches(),
+            "duplicates_dropped": session.duplicates_dropped,
+            "links": [{
+                "tx": s.tx, "rx": s.rx, "packets": s.packets,
+                "rssi_median": s.rssi_median, "rssi_p10": s.rssi_p10, "rssi_p90": s.rssi_p90,
+                "snr_median": round(s.snr_median, 2),
+                "snr_p10": round(s.snr_p10, 2), "snr_p90": round(s.snr_p90, 2),
+                "relayed_packets": s.relayed_packets,
+                "heard_fraction": s.heard_fraction,
+                "distance_m": s.distance_m,
+                "elevation_diff_m": s.elevation_diff_m,
+            } for s in links],
+        }, indent=2))
+        return EXIT_OK
+
+    print(f"\n{len(session.files)} files   {len(session.nodes)} nodes   "
+          f"{len(session.receptions)} receptions   "
+          f"{session.duplicates_dropped} flood copies removed")
+
+    for path, why in session.skipped:
+        print(f"  SKIPPED {path}\n          {why}")
+
+    for problem in session.config_mismatches():
+        print(f"  MISMATCH  {problem}")
+
+    missing = [n for n in session.nodes.values() if not n.has_position]
+    for n in missing:
+        print(f"  NO POSITION  node {n.node} never had its coordinate set; "
+              "its distances cannot be computed")
+
+    if not links:
+        print("\nno direct receptions — every packet arrived via a relay, so "
+              "nothing here measures a single radio path")
+        return EXIT_PROBLEMS
+
+    print("\nDIRECT LINKS")
+    print(f"  {'from':>10} {'to':>10} {'pkts':>5} {'RSSI':>7} {'p10..p90':>13} "
+          f"{'SNR':>6} {'share':>6} {'dist':>8}")
+    for s in links:
+        thin = "  thin" if s.packets < args.min_packets else ""
+        distance = f"{s.distance_m:7.0f}m" if s.distance_m is not None else "      --"
+        share = f"{s.heard_fraction * 100:5.0f}%" if s.heard_fraction is not None else "   --"
+        print(f"  {s.tx:>10} {s.rx:>10} {s.packets:>5} "
+              f"{s.rssi_median:>6.0f}  {s.rssi_p10:>5.0f}..{s.rssi_p90:<5.0f} "
+              f"{s.snr_median:>5.1f} {share} {distance}{thin}")
+
+    pairs = asymmetry(links)
+    if pairs:
+        print("\nASYMMETRY  (the two directions of one pair, in dB)")
+        for a, b, diff, worse in pairs:
+            note = "  <- worth knowing" if diff >= 6 else ""
+            print(f"  {a} <-> {b}: {diff:4.1f} dB apart, worse direction {worse:.0f} dBm{note}")
+
+    thin = [s for s in links if s.packets < args.min_packets]
+    if thin:
+        print(f"\n{len(thin)} of {len(links)} links have fewer than {args.min_packets} "
+              "direct packets. Medians over that few are not stable.")
+
+    print("\nOnly direct receptions are counted. 'share' is the fraction of this "
+          "sender's packets\nthat reached anyone which also reached this receiver "
+          "directly — not an absolute\ndelivery rate, since nothing here records "
+          "what was transmitted.")
+    return EXIT_OK
+
+
 def synth_main(argv: list[str] | None = None) -> int:
     """`synth-log`: write synthetic log files for developing the analysis tools."""
-    from fieldlab.synth import SynthConfig, filename_for, synth_log
+    from fieldlab.synth import MeshConfig, synth_session
 
     p = argparse.ArgumentParser(
         prog="synth-log",
         description=(
-            "Write synthetic log files that obey the schema. The numbers are made "
-            "up; this exists so the analysis tooling can be built and tested before "
-            "there is hardware to record anything real."
+            "Write a synthetic session: one shared mesh, so the same transmission "
+            "appears in several nodes' files exactly as it would in the field. The "
+            "numbers are made up; this exists so the analysis can be built and "
+            "tested before there is hardware to record anything real."
         ),
     )
     p.add_argument("outdir", help="directory to write the files into")
     p.add_argument("--nodes", type=int, default=4, help="how many nodes in the mesh")
     p.add_argument("--minutes", type=int, default=60, help="length of the session")
-    p.add_argument("--interval", type=int, default=20, help="seconds between packets")
+    p.add_argument("--interval", type=int, default=20, help="seconds between transmissions")
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--no-clock", action="store_true",
+                   help="simulate radios whose clock was never set")
     args = p.parse_args(argv)
 
-    if args.nodes < 2:
-        print("a mesh needs at least two nodes", file=sys.stderr)
-        return EXIT_USAGE
-    if args.interval < 1:
-        print("--interval must be at least one second", file=sys.stderr)
-        return EXIT_USAGE
-    if args.minutes < 1:
-        print("--minutes must be at least one minute", file=sys.stderr)
-        return EXIT_USAGE
-    if args.interval > args.minutes * 60:
-        print("--interval is longer than the whole session; no packets would be sent", file=sys.stderr)
+    config = MeshConfig(
+        node_count=args.nodes,
+        duration_s=args.minutes * 60,
+        interval_s=args.interval,
+        seed=args.seed,
+        set_clock=not args.no_clock,
+    )
+
+    try:
+        files = synth_session(config)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
         return EXIT_USAGE
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    node_ids = [1001 + i for i in range(args.nodes)]
-
-    for index, node in enumerate(node_ids):
-        config = SynthConfig(
-            rx_node=node,
-            peers=tuple(n for n in node_ids if n != node),
-            short_name=f"N{index + 1}",
-            boot_count=1,
-            duration_s=args.minutes * 60,
-            interval_s=args.interval,
-            lat=39.8283 + 0.004 * index,
-            lon=-98.5795 + 0.005 * index,
-            seed=args.seed + index,
-        )
-        path = outdir / filename_for(config)
-        path.write_text(synth_log(config))
+    for name, text in sorted(files.items()):
+        path = outdir / name
+        path.write_text(text)
         print(f"wrote {path}")
 
     print("\nThese are invented numbers, not measurements.")

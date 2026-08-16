@@ -139,7 +139,7 @@ EXTRA_SPECS: dict[str, RowSpec] = {
         required=frozenset({"fw", "preset", "boot", "lat", "lon", "alt", "ant"}),
         optional=frozenset(
             {
-                "name", "region", "hw", "libver", "batt", "disp",
+                "name", "region", "hops", "hw", "libver", "batt", "disp",
                 "st_card", "st_write", "st_radio", "st_pos", "st_clock", "st_heard",
             }
         ),
