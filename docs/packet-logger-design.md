@@ -148,7 +148,7 @@ The change will be offered upstream once it has proven itself in a real multi-no
 | RAK4631 Core + RAK19003 Mini base | nRF52840 MCU, SX1262 radio. Arduino bootloader, not RUI3 |
 | Seeed XIAO ESP32-C6 | Needs Arduino ESP32 core 3.x or newer |
 | 3.3 V microSD breakout | Bare socket. Power pin must read **3V3**, not 5 V |
-| microSD card | 32 GB or smaller, FAT32 |
+| microSD card | 32 GB or smaller, **FAT32, MBR partition scheme**. On macOS that is Disk Utility → *Show All Devices* → select the **card**, not the volume → Erase → Format `MS-DOS (FAT)`, Scheme `Master Boot Record`. exFAT does not work with the Arduino SD library, and a GUID scheme often fails to mount. The card is left empty; the firmware creates its own file |
 | 915 MHz whip antenna | Same model on all four within a run |
 | U.FL → SMA pigtail | |
 | LiPo ~2000 mAh, JST-PH 2.0 | Protected cell |

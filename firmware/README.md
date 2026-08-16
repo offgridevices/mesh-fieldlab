@@ -7,13 +7,37 @@ microSD card. No phone, no laptop, no network.
 See [`docs/packet-logger-design.md`](../docs/packet-logger-design.md) for the
 wiring, the file format, and the bench sequence.
 
+## Installing PlatformIO
+
+`uv tool install platformio` does **not** work: the tool environment has no
+`pip`, and PlatformIO shells out to it while installing the ESP32 toolchain.
+Use a seeded virtual environment instead.
+
+```sh
+uv venv --seed ~/.venvs/pio
+~/.venvs/pio/bin/pip install platformio
+~/.venvs/pio/bin/pio --version
+```
+
+Then either use the full path, or add `~/.venvs/pio/bin` to `PATH`.
+
+The first build downloads the toolchain and both dependencies, which takes a
+few minutes. Later builds take seconds.
+
 ## Build
 
 ```sh
 pio run                 # compile
 pio run -t upload       # flash over USB-C
-pio device monitor      # watch the console
+pio device monitor      # watch the console at 115200
 ```
+
+**Unplug the board's 3V3 wire from the breadboard rail before connecting
+USB.** Two supplies into that pin at once damages it. Rail or USB, never
+both.
+
+If the upload cannot find the board, hold **B** (boot), tap **R** (reset),
+release **B**, and run it again.
 
 **Use the platform pinned in `platformio.ini`, not `espressif32`.** The
 official PlatformIO ESP32 platform still ships Arduino core 2.x, which has no
