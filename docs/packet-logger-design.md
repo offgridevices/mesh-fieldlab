@@ -260,7 +260,9 @@ The stamp is the node's **local** time at the moment logging started — a perso
 
 **Every timestamp inside the rows stays UTC.** People get local time on the outside of the file; machines get UTC on the inside, so no analysis ever has to reason about which side of a daylight-saving change a session landed on. The `BOOT` row records `tz` and `utcoff`, which is what lets the local-time name be turned back into UTC without anyone remembering which week the clocks changed.
 
-**When the node has no clock the file cannot be dated.** It opens as `/LOG_<SHORTNAME>_<BOOTCOUNT>.csv` instead and logging starts immediately — waiting for a clock would mean losing packets to get a nicer filename, which is the wrong trade. The moment a packet arrives carrying the time, the file is renamed in place. A boot-counter name surviving in a delivered set therefore means one specific thing: **that node never heard a single timestamped packet all session**, and its rows can only be read relative to their own boot. `validate-csv` reports this as `FILENAME_NO_CLOCK` rather than leaving it to be noticed.
+**Nothing is logged until the clock is set.** The boot holds after the self-test and waits for the time, showing on screen what it is waiting for, because a file that starts before the clock cannot be lined up against the other three and the rows written in that window would be the only ones in the session with no absolute time on them. See §9.2.
+
+**The wait is bounded, not absolute.** If the time never arrives the node logs anyway, under `/LOG_<SHORTNAME>_<BOOTCOUNT>.csv`, and the `BOOT` row records how long it waited in `clkwait`. An undated file still holds every RSSI and SNR reading and every link statistic within itself; coming home with nothing because a phone would not pair is not a trade worth making. If the clock turns up later the file is renamed in place. A boot-counter name surviving in a delivered set therefore means one specific thing: **that node waited, gave up, and never learned the time all session.** `validate-csv` reports this as `FILENAME_NO_CLOCK` rather than leaving it to be noticed.
 
 Where the time comes from at all is §8.
 
@@ -403,8 +405,9 @@ setup()
   init display; if it does not answer, carry on regardless — see below
   read and increment boot counter in NVS
   run the boot self-test (§9.1), showing each result as it lands
+  if the clock is not set, hold and wait for it (§9.2), up to CLOCK_WAIT_MS
   open /LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv, write header and BOOT row
-    (or /LOG_<SHORTNAME>_<BOOTCOUNT>.csv if no clock yet, renamed later)
+    (or /LOG_<SHORTNAME>_<BOOTCOUNT>.csv if the wait timed out, renamed later)
   init serial to the radio at 38400, register the packet-metadata callback
   request node report
 
@@ -457,6 +460,29 @@ Per-node settings live in `firmware/src/config.h`: short name, pins, baud, flush
 **Build with the `pioarduino` platform, not `espressif32`.** The official PlatformIO ESP32 platform still ships Arduino core 2.x, which has no ESP32-C6 support at all and fails outright with *"This board doesn't support arduino framework!"*. The community fork carries Arduino core 3.x and is what every C6 board needs today. It is pinned in `platformio.ini` for the same reason the library is.
 
 The `BOOT` row records the self-test outcome alongside the configuration, so a file can be judged later without anyone having to remember what the screen said at the time.
+
+### 9.2 Waiting for the clock
+
+After the self-test, a node with no time **stops and waits before it logs anything.** The screen says what it wants:
+
+```
+N1 waiting for time
+CONNECT YOUR PHONE
+hold button to skip
+logs anyway in 8:42
+```
+
+The LED blinks throughout, because a still screen and a dark LED for several minutes is indistinguishable from a node that has crashed.
+
+**Holding the button for two seconds skips the wait** and logs undated. This is for the bench, where there is no mesh to hand over a time and sitting through the full timeout to test something else wastes ten minutes. It must be held rather than pressed, so that a knock in a bag cannot quietly cost a session its timestamps.
+
+A node whose radio never answered skips the wait automatically — there is no point waiting for a time to arrive down a link that is not there. That is also what makes a bench test with no radio attached start immediately instead of hanging.
+
+The deployment ritual this is built around: **switch a node on, connect your phone to any node on the mesh, walk away.** The phone hands its clock to the radio it connects to, that radio passes the time on to its neighbours, and each logger picks it up from the first packet it hears. The wait normally ends within seconds of the phone connecting, so its usual cost is nothing.
+
+This is why the ritual matters: **a full power-down loses the time everywhere at once.** Neither the logger nor the radio has a battery-backed clock, so four nodes switched off on Tuesday and on again on Thursday all wake up blank together, with nobody left on the mesh to ask. Something outside the mesh has to reintroduce the time, and the phone in your pocket is the cheapest thing that can.
+
+`CLOCK_WAIT_MS` in `config.h` sets the give-up bound — ten minutes by default, far longer than pairing a phone takes and short enough that nobody sits through it by accident. Set it to `0` to restore the older behaviour of logging immediately regardless, or to something enormous to refuse to log at all without a clock.
 
 ## 10. Generating traffic to measure
 

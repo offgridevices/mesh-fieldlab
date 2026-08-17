@@ -27,6 +27,8 @@ struct Result {
   bool     tx_enabled     = false;
 
   bool     clock_set      = false;
+  bool     clock_waited   = false;   // did the boot have to stop and wait?
+  uint32_t clock_wait_ms  = 0;       // and for how long, whether or not it came
   uint8_t  battery_pct    = 0;
   uint8_t  heard_count    = 0;       // distinct neighbours during the listen
 

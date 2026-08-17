@@ -145,6 +145,9 @@ EXTRA_SPECS: dict[str, RowSpec] = {
                 # back into UTC without anyone having to remember which week
                 # the clocks changed.
                 "tz", "utcoff",
+                # Seconds the boot spent held, waiting for the time before it
+                # would log at all. Non-zero means the clock was late.
+                "clkwait",
             }
         ),
     ),

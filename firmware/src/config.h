@@ -11,7 +11,7 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.2.0"
+#define LOGGER_VERSION    "0.3.0"
 
 // --- timezone --------------------------------------------------------------
 // A POSIX timezone rule, not a fixed offset. The two dates on the end are the
@@ -54,6 +54,21 @@
 #define BOOT_LISTEN_MS      30000UL   // Self-test: listen for neighbours
 #define SCREEN_WAKE_MS      10000UL   // How long a button press lights the screen
 
+// How long the boot waits for the time before logging without it.
+//
+// Nothing is logged until the clock is set, because a file that starts before
+// the time is known cannot be lined up against the other three nodes. The wait
+// ends the instant a packet arrives carrying the time — normally seconds after
+// a phone connects — so this number is only the give-up bound, not the cost.
+//
+// It is bounded on purpose. An undated file still holds every RSSI and SNR
+// reading, and every link statistic within itself; losing a whole session to a
+// phone that would not pair is a far worse outcome than losing the timestamps.
+//
+//   0        log immediately, whatever the clock says (the old behaviour)
+//   large    effectively refuse to log at all without a clock
+#define CLOCK_WAIT_MS       600000UL  // ten minutes
+
 #define SD_RETRY_MS         5000UL    // Remount attempts after a card failure
 
 // --- console ---------------------------------------------------------------
@@ -68,6 +83,10 @@
 // --- sanity ----------------------------------------------------------------
 // A whole boot is roughly RADIO_WAIT_MS + BOOT_LISTEN_MS of standing there.
 // Much beyond a minute and people stop watching it, which defeats the point.
+//
+// CLOCK_WAIT_MS is deliberately not counted here: it is conditional, it ends
+// as soon as the phone hands over the time, and the screen tells you what it
+// is waiting for the whole time it waits.
 #if (RADIO_WAIT_MS + BOOT_LISTEN_MS) > 90000UL
 #error "Boot self-test is too long to stand and watch. Shorten the waits."
 #endif

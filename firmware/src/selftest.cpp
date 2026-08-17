@@ -52,6 +52,58 @@ void serviceUntil(uint32_t deadline) {
   }
 }
 
+// Wait for the radio to hand over a time, and say so while waiting.
+//
+// The screen names the action, not the fault. Somebody standing over the node
+// needs to know to reach for their phone; that a flag is false is no use to
+// them. The countdown is there so the wait never feels like a hang.
+//
+// Returns as soon as the clock is set, which is normally seconds after a phone
+// connects to any node on the mesh.
+bool awaitClock(uint32_t timeoutMs) {
+  uint32_t deadline = millis() + timeoutMs;
+  uint32_t lastPaint = 0;
+  uint32_t heldSince = 0;
+
+  while (!Clock::valid() && (int32_t)(millis() - deadline) < 0) {
+    mt_loop(millis());
+    uint32_t now = millis();
+
+    // Holding the button skips the wait. On a bench there is no mesh to hand
+    // over a time, and sitting through the full timeout to test anything else
+    // wastes ten minutes. Held rather than pressed, so that a knock in a bag
+    // cannot quietly cost a session its timestamps.
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      if (heldSince == 0) {
+        heldSince = now;
+      } else if (now - heldSince >= 2000) {
+        say("clock    : wait skipped by button");
+        return false;
+      }
+    } else {
+      heldSince = 0;
+    }
+
+    if (now - lastPaint >= 500) {
+      lastPaint = now;
+      // Blinking here matters: a still screen and a dark LED for ten minutes
+      // looks exactly like a node that has crashed.
+      digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+
+      uint32_t left = (uint32_t)(deadline - now) / 1000;
+      char line[26];
+      snprintf(line, sizeof(line), "logs anyway in %lu:%02lu",
+               (unsigned long)(left / 60), (unsigned long)(left % 60));
+      Screen::show(NODE_SHORT_NAME " waiting for time",
+                   "CONNECT YOUR PHONE",
+                   "hold button to skip",
+                   line);
+    }
+    delay(5);
+  }
+  return Clock::valid();
+}
+
 }  // namespace
 
 void noteRadioConfig(const mt_radio_config_t * config) {
@@ -192,6 +244,35 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   if (nodeReportCb != nullptr) mt_request_node_report(nodeReportCb);
   serviceUntil(millis() + BOOT_LISTEN_MS);
 
+  // --- the clock ------------------------------------------------------------
+  // Nothing is logged until the time is known. A file that starts before the
+  // clock is set cannot be lined up against the other three nodes, and the
+  // rows written in that window would be the only ones in the session with no
+  // absolute time on them.
+  //
+  // The wait is bounded rather than absolute, because the alternative failure
+  // is worse: an undated file still holds every RSSI and SNR reading and every
+  // link statistic within itself, and coming home with nothing at all because
+  // a phone would not pair is not a trade worth making.
+  if (!Clock::valid() && CLOCK_WAIT_MS > 0) {
+    say("clock    : NOT SET — waiting up to %lu min before logging.",
+        (unsigned long)(CLOCK_WAIT_MS / 60000));
+    say("           CONNECT YOUR PHONE to any node on the mesh now.");
+    say("           The radio takes the time from the phone and passes it on.");
+
+    r.clock_waited = true;
+    uint32_t began = millis();
+    awaitClock(CLOCK_WAIT_MS);
+    r.clock_wait_ms = millis() - began;
+
+    if (Clock::valid()) {
+      say("clock    : arrived after %lu s", (unsigned long)(r.clock_wait_ms / 1000));
+    } else {
+      say("clock    : GAVE UP after %lu s — logging anyway, undated.",
+          (unsigned long)(r.clock_wait_ms / 1000));
+    }
+  }
+
   r.heard_count = g_heardCount;
   r.clock_set   = Clock::valid();
   r.battery_pct = g_battery;
@@ -224,7 +305,7 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            ";boot=%lu;preset=%s;region=%s;hops=%u"
            ";lat=%.6f;lon=%.6f;alt=%ld"
            ";st_card=%d;st_write=%d;st_radio=%d;st_pos=%d;st_clock=%d;st_heard=%u"
-           ";disp=%d;batt=%u;tz=%s;utcoff=%ld",
+           ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu",
            (unsigned long)bootCount,
            presetName(r.preset), regionName(r.region), (unsigned)r.hop_limit,
            r.lat, r.lon, (long)r.alt,
@@ -240,7 +321,11 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            // turn it back into UTC without knowing where the node was or what
            // the daylight-saving rules were that week.
            Clock::zoneName(),
-           Clock::utcOffsetSeconds());
+           Clock::utcOffsetSeconds(),
+           // Seconds spent held at boot waiting for the time. Zero is the
+           // normal case; a large number means the phone was slow, and the
+           // give-up value means the file that follows is undated.
+           (unsigned long)(r.clock_wait_ms / 1000));
 }
 
 const char * verdict(const Result & r) {
