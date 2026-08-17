@@ -62,6 +62,16 @@ class Summary:
     #: (tx_node, rx_node) -> count of deduplicated relayed packets
     relayed_links: Counter = field(default_factory=Counter)
     duplicate_rows: int = 0
+    #: Rows the node formed while it had nowhere to put them, as of the last
+    #: status row. The true size of the hole in a session, which a gap in the
+    #: timestamps can only hint at.
+    rows_dropped: int = 0
+    #: Seconds of session that had already run when this file was opened.
+    #: Non-zero means the node started with no usable card and opened this file
+    #: later, without a power cycle.
+    resumed_after_s: int = 0
+    #: Faults that cleared while the node kept running, as ("card", uptime_ms).
+    recoveries: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def duration_s(self) -> float:
@@ -449,6 +459,9 @@ class _Checker:
             self.summary.boot_count = pairs.get("boot")
             self.summary.firmware = pairs.get("fw")
             self.summary.preset = pairs.get("preset")
+            resumed = pairs.get("resume", "")
+            if resumed.isdigit():
+                self.summary.resumed_after_s = int(resumed)
             self._check_boot_position(pairs, lineno)
             self._check_boot_selftest(pairs, lineno)
         elif row_type == S.ROW_STATUS:
@@ -502,6 +515,17 @@ class _Checker:
             )
 
     def _check_status(self, pairs: dict[str, str], uptime: int, lineno: int) -> None:
+        # Carried forward rather than warned about per row: the count appears on
+        # every status row after an outage, and one file-level number is what a
+        # reader actually wants.
+        dropped = pairs.get("drops", "")
+        if dropped.isdigit():
+            self.summary.rows_dropped = max(self.summary.rows_dropped, int(dropped))
+
+        recovered = pairs.get("recov")
+        if recovered:
+            self.summary.recoveries.append((recovered, uptime))
+
         if pairs.get("sd_ok") == "0":
             self.err(
                 "SD_FAILED",
@@ -535,6 +559,29 @@ class _Checker:
 
         if s.by_row_type[S.ROW_PKT] == 0:
             self.warn("NO_PACKETS", "no packet rows; the node was running but heard nothing")
+
+        # A node that healed itself is a good outcome, not an error — but the
+        # file is still shorter than the session, and saying so here is the
+        # only way anyone finds out without reading every status row.
+        if s.resumed_after_s:
+            self.warn(
+                "RESUMED",
+                f"this file was opened {s.resumed_after_s / 60:.0f} min into the session, "
+                "not at power-on; the node ran that long with no usable card and "
+                "nothing it heard in that window was recorded",
+            )
+        if s.rows_dropped:
+            self.warn(
+                "ROWS_DROPPED",
+                f"{s.rows_dropped} rows were formed with nowhere to write them; the "
+                "card was unusable for part of this run and that much is missing",
+            )
+        for what, uptime in s.recoveries:
+            self.warn(
+                "RECOVERED",
+                f"{what} failed and then came back {uptime / 60000:.0f} min in; "
+                "readings either side of that point may not be comparable",
+            )
 
         if len(s.schema_versions) > 1:
             self.err(

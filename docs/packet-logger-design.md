@@ -302,8 +302,12 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 |---|---|---|
 | `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
 | `BOOT` also carries | optionally | `st_card`, `st_write`, `st_radio`, `st_pos`, `st_clock`, `st_heard`, `batt`, `disp` — what the boot self-test (§9.1) found |
+| `BOOT` also carries | on a resumed file | `resume` — seconds of session already elapsed when this file was opened, because the card arrived late or was swapped (§9.4) |
 | `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
+| `STATUS` also carries | optionally | `drops` — rows formed with nowhere to write them; `recov` — the blocks that just came back, joined with `+` (§9.4) |
 | `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
+
+Adding an **optional** key does not bump the schema version: a reader that does not know it emits a warning and carries on, and every old file stays valid. Adding a column, changing a range, or adding a *required* key does.
 
 ### 6.2 The checker
 
@@ -432,6 +436,7 @@ loop()
   service the protocol (handles want_config and the 60 s heartbeat)
   on each packet: append one row, compute hops_used, increment counters
   flush every 5 s or 10 rows, whichever comes first
+  re-attempt whatever is currently broken (§9.4)
   every 60 s: STATUS row
   every 300 s: refresh node report
   on button press: wake the display 10 s, or step one page deeper (§9.3)
@@ -469,6 +474,7 @@ Non-negotiable for unattended use:
 - **Flush often.** A field day that dies with forty minutes buffered in RAM is a wasted field day.
 - **Date and time in the filename**, so a brownout-and-reboot creates a new file instead of overwriting the old one, and so a card full of sessions sorts itself. The boot counter still backs it up when the clock is unset, and still breaks ties inside a single minute.
 - **On card failure, keep running.** Keep counting, signal on the LED, retry the mount. Do not halt — a node that stops logging is worse than one that logs a gap.
+- **Nothing the self-test can do may be a one-time-only ability.** Every check it makes has to be re-makeable while the node runs (§9.4).
 
 Power management: WiFi off, Bluetooth off, CPU at 80 MHz. **No deep sleep** — the logger must continuously service the serial stream.
 
@@ -530,6 +536,38 @@ Read left to right, that is the order the question is actually asked: which chec
 Page 6 is the catch-all for everything with no block of its own: battery, uptime, packets heard and how long ago the last one was. The battery shape stands in the icon's place there, so the run of pages keeps its rhythm.
 
 The first press wakes the screen wherever it was left rather than jumping home, so a second visit to the same node opens on what you were looking at last time.
+
+### 9.4 Recovering without a power cycle
+
+The self-test answers five questions once, while somebody is stood there. Every one of those answers can change afterwards — and the only way to act on a changed answer used to be to open the box and cycle the power, which throws away everything recorded so far. That trade is never worth making, so the running loop re-attempts each check on a timer.
+
+The rule: **nothing the self-test can do may be a one-time-only ability.**
+
+| Block | The fault that can clear | What the loop does about it |
+|---|---|---|
+| **C** Card | No card at switch-on; a card reseated, swapped, or that failed a write | Re-mount and re-prove writability, backing off 5 s → 30 s. Resumes the session's own file if it is still there; opens a new one, with its own `BOOT` row, if it is not |
+| **R** Radio | Still booting; reset, brownout, connector shaken loose | Any word from the radio counts as proof of life. After 8 minutes of total silence it is treated as gone, and asked every 3 s until it answers |
+| **P** Position | A coordinate set from a phone part-way through a session | Settings are re-read continuously; while anything is wrong the radio is also asked directly, every 30 s |
+| **K** Clock | The first packet carrying a time arrives | Already recovered on its own; the file renames itself from its boot counter to its date |
+| **H** Heard | A neighbour finally transmits | Already recovered on its own |
+
+**The case that motivated this.** A node switched on with an empty slot could never start recording, however many cards were pushed in afterwards. The old retry path could only reattach to a filename that already existed, and with no card at boot there was never a file to reattach to — so the card was mounted, proven, and then ignored for the rest of the day.
+
+**A radio that dies is worse than a radio that never starts.** The old check moved one way only, from "no answer" to "answered". A radio that reset mid-session went on reading `RADIO OK` on the screen while the node quietly recorded nothing for hours. Silence is now the evidence, and the window is deliberately longer than the gap between node reports — on a dead-quiet mesh those reports are the only thing proving the link is alive, so a shorter window would condemn a working radio every time.
+
+**Recovery is written down, not just performed.** Two audiences need different things and neither can reconstruct the other's:
+
+- Rows formed while the card was down are **counted**, not buffered, and the count appears on every status row from then on as `drops=`. That number is the true size of the hole; a gap in the timestamps only says that *something* stopped.
+- The moment a fault clears, a status row carries `recov=card`, or `recov=card+radio` when several clear at once.
+- A file opened part-way through a session carries `resume=<seconds>` in its `BOOT` row, marking it as a continuation rather than a power cycle — which would otherwise look identical to a node that rebooted itself in the field.
+
+`validate-csv` surfaces all three (`RESUMED`, `ROWS_DROPPED`, `RECOVERED`) as warnings rather than errors. A node that healed itself produced usable data; it just produced less of it than the session length suggests, and that has to reach whoever reads the card.
+
+**Recovery probes are not written to the card.** While something is wrong the radio is asked for a node report every 30 s, far more often than the ordinary five minutes. With forty-odd nodes known to a radio, logging every one of those replies would bury the packet rows the session exists to collect — so probe replies update the node's own state and are otherwise discarded. The five-minute schedule that *does* reach the card is untouched.
+
+**One thing this fixed by accident.** The screen's single-word verdict was built from the boot snapshot while the state blocks underneath were read live. A node that lost its card mid-session therefore showed a red `C` block and the word `READY` at the same time. The verdict is now built from the same live state as the blocks, so the two can no longer disagree.
+
+**What is still lost.** Everything heard while the card was unusable is gone — formed, counted, and discarded. Buffering those rows in RAM would close the gap for short outages and is noted in §15.
 
 ## 10. Generating traffic to measure
 
@@ -606,6 +644,8 @@ Build **one** complete node and validate it end to end before assembling the oth
 - **Ask before waiting**, and keep asking. Both boards share one supply and therefore boot together, so the first request usually lands on a radio that is still starting and is dropped in silence.
 - **No check may latch at boot.** Card, radio, position, clock and neighbours are all re-read from live state on every screen refresh. A fault that has cleared but still shows red teaches people to stop believing the screen, which costs more than the original fault.
 
+That second rule turned out to be half a rule. Re-*reading* live state keeps the screen honest, but it does not make anything come back — the check that failed has to be *re-attempted*, and until §9.4 none of them were. A node switched on without a card showed the fault correctly on the screen and then never recorded a row, no matter what anyone did short of a power cycle.
+
 **The radio's battery percentage is only meaningful when the radio is the power source.** Back-fed from the logger's 3.3 V rail it reports that rail as a nearly-flat cell — 9% on the bench. The battery belongs on the radio's `P2` with the switch in its positive lead (§5.3), which is the same direction the field build uses anyway.
 
 **First real capture, 17 August 2026 — 56 minutes, 421 rows, read back off the card and put through the checker and the analysis.** The format survived contact with the firmware, which is what writing the checker first was for. Three things came out of it:
@@ -618,7 +658,9 @@ With those corrected the capture reduces to one warning, and the analysis produc
 
 **A card can pass on the logger and still be dead.** The first card mounted on the ESP32 and accepted a written row, while macOS could not mount it at all and could not read back a filesystem it had just written. The microcontroller's FAT implementation is far more forgiving than a desktop's. Prove a new card on a computer — write a large file, eject, read it back, compare — before trusting it with a session. The replacement was verified that way over 100 MB.
 
-Still unproven on one node: the fixed position, and steps 7 onward. Nothing involving four nodes has been attempted.
+**The fixed position was the phone, not the radio.** With the iOS app's *Accurate Locations Only* setting on, every fix taken indoors — 10 to 65 m of accuracy — was rejected before it reached the radio, and the app then displayed *Fixed Position: on* regardless. The node looked configured and had no coordinate behind it, which is exactly the failure `st_pos` exists to catch. Turning the setting off produced a real coordinate on the next boot and all six checks green for the first time.
+
+Still unproven on one node: steps 9 onward, including every recovery path in §9.4. Nothing involving four nodes has been attempted.
 
 **The radio has to be configured before any of it means anything** — Meshtastic flashed, the Serial module enabled in `PROTO` mode at the right pins and baud, region set, fixed position written. This is what `tools/configure_node.py` is for, and it is **not written yet**; unit one was configured by hand with the §8 command. Doing it by hand once is fine for proving the link; doing it by hand four times is how three nodes end up differing from the fourth in a way nobody wrote down.
 
@@ -632,11 +674,16 @@ Still unproven on one node: the fixed position, and steps 7 onward. Nothing invo
 6. Forked library, RSSI and SNR printed to the console. From across a room expect −30 to −60 dBm and +5 to +12 dB.
 7. Add card writing. Power-cycle mid-write repeatedly; confirm no corruption and a fresh file per boot.
 8. Add the display and the boot self-test. Prove each check **fails** as designed, not just that it passes: pull the card, unplug the radio's serial line, clear the fixed position, and confirm the screen says so and the node still starts logging. A self-test that only ever shows green has not been tested.
-9. Fit the switch and the button. Confirm the node survives fifty power cycles, that a press wakes the display and it blanks again, and that the button does nothing harmful if held down at power-up.
-10. Measure actual current draw and replace the estimates in §5.3. Measure it twice — display lit and display blanked — so the cost of the screen is a number rather than an assumption.
-11. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
-12. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
-13. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance, and that the switch and button are usable through the enclosure with cold hands.
+9. Prove each check **recovers**, which is the other half of step 8 and the one that decides whether a box can be left alone (§9.4). Four separate runs, no power cycle in any of them:
+    - Switch on with an empty slot, wait a minute, push a card in. A new file must appear within thirty seconds, carrying its own `BOOT` row with `resume=` on it and `st_card=1`. Run `validate-csv` on it: `RESUMED` and `ROWS_DROPPED` as warnings, no errors.
+    - Pull the card mid-session and put the **same** card back. The node must resume the same file — one `BOOT` row in it, not two — and the next status row must carry `recov=card` and a non-zero `drops=`.
+    - Pull the card mid-session and put a **different** card in. A new file, again with its own `BOOT` row.
+    - Unplug the radio's serial line for ten minutes and reconnect it. The screen's `R` block and its verdict must both go bad, and both must come back; a status row must carry `recov=radio`. Ten minutes because the silence window is eight — anything shorter proves nothing.
+10. Fit the switch and the button. Confirm the node survives fifty power cycles, that a press wakes the display and it blanks again, and that the button does nothing harmful if held down at power-up.
+11. Measure actual current draw and replace the estimates in §5.3. Measure it twice — display lit and display blanked — so the cost of the screen is a number rather than an assumption.
+12. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
+13. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
+14. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance, and that the switch and button are usable through the enclosure with cold hands.
 
 A 3.3 V USB-serial adapter is required. **A 5 V logic adapter will damage the nRF52840.**
 
@@ -649,7 +696,8 @@ firmware/                 PlatformIO project for the logger board
     config.h              per-node settings; the only file that varies
     log_schema.h          the CSV contract, mirroring the Python schema
     clock.*               absolute time, the timezone rule, the file stamp
-    logfile.*             card, boot counter, rows, flushing, recovery
+    logfile.*             card, boot counter, rows, flushing, remounting
+    recovery.*            re-attempting every failed check while the node runs
     screen.*              the OLED; optional at runtime
     selftest.*            the boot checks and how they are shown
     main.cpp              callbacks and the loop
@@ -688,6 +736,10 @@ Determined only with hardware in hand:
 8. Whether altitude survives the trip. `Meshtastic-arduino` narrows the protocol's 32-bit altitude to a **signed byte** in its node struct, so anything outside ±127 m is already lost before the logger sees it. Fine for the sites in mind, but it is a third field the library quietly damages, and it would need the same treatment as the other two if a taller site is ever used
 
 Each is written so it is a one-line change, not a rewrite.
+
+Deliberately not built yet:
+
+9. **Buffering rows through a card outage.** Recovery (§9.4) restores logging without a power cycle, but everything heard while the card was unusable is still counted and discarded. A few hundred packets held in RAM — well within the ~300 KB spare — would close the gap for a card reseated by hand, which is the common case. It is not built because the retry loop had to exist first: without it the buffer would have had nowhere to drain to.
 
 ## 16. References
 

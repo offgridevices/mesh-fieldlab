@@ -18,9 +18,11 @@ bool     g_mounted = false;
 bool     g_healthy = false;
 bool     g_dated = false;      // is g_name the date-stamped form?
 uint32_t g_rows = 0;
+uint32_t g_dropped = 0;
 uint32_t g_sinceFlush = 0;
 uint32_t g_lastFlush = 0;
 uint32_t g_lastRetry = 0;
+uint8_t  g_failedTries = 0;
 
 // One row is well under this. Sized with room to spare rather than tuned:
 // a truncated row is a corrupted measurement, and RAM is not the constraint.
@@ -34,11 +36,18 @@ void fail() {
 }
 
 void append(const char * line) {
-  if (!g_healthy || !g_file) return;
+  // A row formed while the card is down is counted, not silently forgotten.
+  // The count is the only honest measure of how much a session lost, and it is
+  // written into every status row from the moment the card comes back.
+  if (!g_healthy || !g_file) {
+    g_dropped++;
+    return;
+  }
 
   size_t wanted = strlen(line);
   if (g_file.write((const uint8_t *)line, wanted) != wanted) {
     fail();
+    g_dropped++;
     return;
   }
   g_rows++;
@@ -129,6 +138,10 @@ bool open(const char * shortName, uint32_t bootCount) {
   // self-test spends thirty seconds listening before this is called — the file
   // is born with its date on it. If not, it opens under the boot counter and
   // gets renamed later. Logging never waits for a clock.
+  // Recovery can reach here mid-session with a stale handle from the card that
+  // went away. Let go of it before taking another.
+  if (g_file) g_file.close();
+
   g_dated = Clock::valid();
   if (g_dated) datedName(g_name, sizeof(g_name), shortName);
   else         bootName(g_name, sizeof(g_name), shortName, bootCount);
@@ -213,16 +226,25 @@ void writePacket(const mt_packet_meta_t * meta) {
   append(g_line);
 }
 
-void writeStatus(uint32_t freeHeap) {
+void writeStatus(uint32_t freeHeap, const char * note) {
   // Once the clock is set every row carries absolute time, not just packet
   // rows. That is what lets two nodes' files be lined up against each other
   // across a quiet stretch when nothing was received.
   int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
-  snprintf(g_line + n, sizeof(g_line) - n,
-           "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_STATUS ",rows=%lu;heap=%lu;sd_ok=%d\n",
-           (unsigned long)g_rows,
-           (unsigned long)freeHeap,
-           g_healthy ? 1 : 0);
+  n += snprintf(g_line + n, sizeof(g_line) - n,
+                "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_STATUS
+                ",rows=%lu;heap=%lu;sd_ok=%d;drops=%lu",
+                (unsigned long)g_rows,
+                (unsigned long)freeHeap,
+                g_healthy ? 1 : 0,
+                (unsigned long)g_dropped);
+  // Named here rather than inferred from a gap in the timestamps, because a
+  // gap says only that something stopped. Which block came back, and when, is
+  // the difference between a file somebody can explain and one they distrust.
+  if (note != nullptr && note[0] != '\0') {
+    n += snprintf(g_line + n, sizeof(g_line) - n, ";recov=%s", note);
+  }
+  snprintf(g_line + n, sizeof(g_line) - n, "\n");
   append(g_line);
 }
 
@@ -261,33 +283,71 @@ void writeNode(const mt_node_t * node) {
 }
 
 void tick(uint32_t now) {
-  if (g_healthy) {
-    if (g_sinceFlush >= FLUSH_EVERY_ROWS ||
-        (g_sinceFlush > 0 && now - g_lastFlush >= FLUSH_INTERVAL_MS)) {
-      g_file.flush();
-      g_sinceFlush = 0;
-      g_lastFlush = now;
-    }
-    return;
+  if (!g_healthy) return;
+  if (g_sinceFlush >= FLUSH_EVERY_ROWS ||
+      (g_sinceFlush > 0 && now - g_lastFlush >= FLUSH_INTERVAL_MS)) {
+    g_file.flush();
+    g_sinceFlush = 0;
+    g_lastFlush = now;
   }
+}
 
-  // Unhealthy: keep trying, on a timer, forever. Never give up and never
-  // stop the caller from running.
-  if (now - g_lastRetry < SD_RETRY_MS) return;
+Recovery recover(const char * shortName, uint32_t bootCount) {
+  if (g_healthy) return Recovery::NONE;
+
+  // Try soon after a failure, then less often. Re-initialising the bus against
+  // an empty slot is not free, and a node that spends a whole field day
+  // retrying every five seconds is spending that time not listening. The first
+  // few attempts are the ones that matter — a card reseated by hand, or a write
+  // that failed once — and after those the fault needs a person anyway.
+  uint32_t wait = SD_RETRY_MS << (g_failedTries > 3 ? 3 : g_failedTries);
+  if (wait > RECOVERY_INTERVAL_MS) wait = RECOVERY_INTERVAL_MS;
+  uint32_t now = millis();
+  if (g_lastRetry != 0 && now - g_lastRetry < wait) return Recovery::NONE;
   g_lastRetry = now;
 
+  auto giveUpForNow = [&]() {
+    if (g_failedTries < 255) g_failedTries++;
+    return Recovery::NONE;
+  };
+
+  // From scratch every time. A card that was pulled and pushed back in is a
+  // different volume as far as the driver is concerned, and reusing the old
+  // mount state is how you get a handle that accepts writes into nowhere.
   SD.end();
   g_mounted = false;
-  if (!mount()) return;
+  if (!mount()) return giveUpForNow();
 
-  g_file = SD.open(g_name, FILE_APPEND);
-  if (!g_file) return;
-  g_healthy = true;
-  g_lastFlush = now;
+  // Mounting is not the same as working. The boot test proves the card takes
+  // data before trusting it and so does this: a card that mounts and silently
+  // discards writes would otherwise read as a full recovery and lose the rest
+  // of the session as convincingly as no card at all.
+  if (!proveWritable()) return giveUpForNow();
+
+  g_failedTries = 0;
+
+  // Our own file is still there — the ordinary case of a write that failed, or
+  // a card reseated without being swapped. Carry on where the session left off.
+  if (g_name[0] != '\0' && SD.exists(g_name)) {
+    g_file = SD.open(g_name, FILE_APPEND);
+    if (!g_file) return giveUpForNow();
+    g_healthy = true;
+    g_lastFlush = now;
+    return Recovery::RESUMED;
+  }
+
+  // Either nothing was ever opened, because the node started with an empty
+  // slot, or this is a different card. Both need a file of their own, and both
+  // need a BOOT row before anything in it can be interpreted — which is the
+  // caller's job, and why the two outcomes are distinguished.
+  if (!open(shortName, bootCount)) return giveUpForNow();
+  return Recovery::RESTARTED;
 }
 
 bool healthy() { return g_healthy; }
+bool mounted() { return g_mounted; }
 uint32_t rowsWritten() { return g_rows; }
+uint32_t dropped() { return g_dropped; }
 const char * fileName() { return g_name; }
 
 }  // namespace LogFile

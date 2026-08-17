@@ -66,15 +66,19 @@ void refreshOwn(Result & r);
 // leaves the node looking configured while it is not.
 bool positionUsable(const Result & r);
 
-// Re-examines a radio that did not answer in time, and updates the result in
-// place if it has since. Returns true only on the no-radio → radio transition,
-// so the caller can say so once rather than every loop.
+// Records whether the radio is currently answering, and re-reads its settings
+// whenever it starts. `alive` is the caller's judgement — Recovery owns it,
+// because deciding a radio has gone quiet means watching the clock, not the
+// protocol. Returns true only when the answer changed, so the caller can say
+// so once rather than every loop.
 //
-// A radio can outlast the boot test's patience — it is a whole Meshtastic
-// device starting up, on the same supply, at the same moment. Latching that
-// first answer as final would leave a working node reporting a dead radio for
-// the rest of the session.
-bool recheckRadio(Result & r);
+// This has to move in both directions. A radio can outlast the boot test's
+// patience — it is a whole Meshtastic device starting up, on the same supply,
+// at the same moment — so a node that answers late must stop being shown as
+// broken. And a radio can stop: a reset, a brownout, a connector shaken loose
+// in a bag. Latching the first answer as final leaves that node displaying
+// RADIO OK and recording nothing at all, for hours, with nobody there to see.
+bool reviewRadio(Result & r, bool alive);
 
 // Renders the outcome as `extra` for the BOOT row, so the file records what
 // the screen said. Nobody remembers by the time the card is read.

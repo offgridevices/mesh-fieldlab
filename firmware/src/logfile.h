@@ -49,14 +49,53 @@ bool adoptClockName(const char * shortName);
 
 void writeBoot(const char * extra);
 void writePacket(const mt_packet_meta_t * meta);
-void writeStatus(uint32_t freeHeap);
+
+// `note` becomes the row's recov= key, naming whatever just came back. Null
+// for the ordinary once-a-minute row.
+void writeStatus(uint32_t freeHeap, const char * note = nullptr);
 void writeNode(const mt_node_t * node);
 
-// Call every loop. Owns the flush policy and the remount retry.
+// Call every loop. Owns the flush policy only; recovery is attempted through
+// recover() so that its timing is one decision made in one place.
 void tick(uint32_t now);
 
+// What an attempt to bring the card back actually achieved.
+enum class Recovery : uint8_t {
+  NONE,      // still no usable card
+  RESUMED,   // the session's own file was there and is open again
+  RESTARTED  // a usable card with no file of ours on it; a new one is open
+};
+
+// Try to make the card usable again. Safe and cheap to call on a timer, and
+// designed to be called forever: a node whose card is missing must still be
+// able to start recording the moment somebody pushes one in.
+//
+// The case that motivates the whole function is a node switched on with an
+// empty slot. Nothing was ever opened, so there is no file to reopen — the old
+// retry path could only ever reattach to a name that already existed, which
+// meant a card inserted after boot was mounted, proven, and then ignored for
+// the rest of the session.
+//
+// RESTARTED tells the caller the returned file is empty apart from its header
+// and still needs a BOOT row, because a file that cannot say how the node was
+// configured is not analysable.
+Recovery recover(const char * shortName, uint32_t bootCount);
+
 bool healthy();
+
+// A card is present and mounted. Not the same as healthy(): a card that
+// mounts and then refuses a test write is mounted and useless, and telling
+// those apart is the difference between "push it in properly" and "bring a
+// different card".
+bool mounted();
+
 uint32_t rowsWritten();
+
+// Rows that were formed but had nowhere to go, because the card was down when
+// they were written. Counted rather than buffered: the number is what tells a
+// reader how big the hole in a session really is.
+uint32_t dropped();
+
 const char * fileName();
 
 }  // namespace LogFile

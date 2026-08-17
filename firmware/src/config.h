@@ -11,7 +11,7 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.7.0"
+#define LOGGER_VERSION    "0.8.0"
 
 // --- timezone --------------------------------------------------------------
 // A POSIX timezone rule, not a fixed offset. The two dates on the end are the
@@ -80,7 +80,29 @@
 //   large    effectively refuse to log at all without a clock
 #define CLOCK_WAIT_MS       600000UL  // ten minutes
 
-#define SD_RETRY_MS         5000UL    // Remount attempts after a card failure
+// --- recovery ---------------------------------------------------------------
+// Nothing the boot test can do may be a one-time-only ability. A card put in
+// after the node was switched on, a radio that reset, a position set from a
+// phone an hour into a session — all of these have to be picked up while the
+// node keeps running, because the alternative is a person power-cycling a
+// sealed box in a field and losing everything recorded so far.
+
+#define SD_RETRY_MS         5000UL    // First remount attempt after a failure
+#define RECOVERY_INTERVAL_MS 30000UL  // ...backing off to this, and staying there
+
+// How long the radio may say nothing at all before it is treated as gone.
+//
+// Must comfortably exceed NODE_REPORT_MS, because on a silent mesh the periodic
+// node report is the only thing that proves the radio is still there. One whole
+// missed report plus most of another: a single dropped reply cannot condemn a
+// working radio, and a genuinely dead one is still caught inside ten minutes.
+#define RADIO_SILENT_MS     480000UL
+
+// A node report asked for by the recovery tick rather than by the ordinary
+// schedule is a liveness probe, not data. This is how long its replies are
+// recognised as such and kept out of the file — at 40-odd known nodes, logging
+// every probe would bury the packet rows.
+#define PROBE_WINDOW_MS     10000UL
 
 // --- console ---------------------------------------------------------------
 // Everything the screen shows is also written to USB serial, so a node can be
@@ -100,4 +122,10 @@
 // is waiting for the whole time it waits.
 #if (RADIO_WAIT_MS + BOOT_LISTEN_MS) > 90000UL
 #error "Boot self-test is too long to stand and watch. Shorten the waits."
+#endif
+
+// A silence window shorter than the gap between node reports would condemn a
+// perfectly good radio on a quiet mesh, every time, forever.
+#if RADIO_SILENT_MS <= NODE_REPORT_MS
+#error "RADIO_SILENT_MS must exceed NODE_REPORT_MS or a healthy radio reads as dead."
 #endif

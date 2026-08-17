@@ -157,13 +157,29 @@ EXTRA_SPECS: dict[str, RowSpec] = {
                 # Seconds the boot spent held, waiting for the time before it
                 # would log at all. Non-zero means the clock was late.
                 "clkwait",
+                # Seconds of session that had already elapsed when this file
+                # was opened. Present only on a file that did not begin at
+                # power-on: the node started with no usable card, or the card
+                # was swapped, and it opened a new file mid-run rather than
+                # waiting for somebody to power-cycle it.
+                #
+                # Its presence is a warning as much as a marker. Everything the
+                # node heard before this instant was formed and thrown away,
+                # and the STATUS rows that follow say how many rows that was.
+                "resume",
             }
         ),
     ),
     # Written every 60 s: proof the node was alive and the card was working.
+    #
+    # `drops` counts rows the node formed while it had nowhere to put them —
+    # the true size of a hole, which a gap in the timestamps can only hint at.
+    # `recov` appears on the one row written the moment a fault cleared, and
+    # names the blocks that came back: "card", "radio", "pos", "clock",
+    # "heard", joined with "+" when several cleared at once.
     ROW_STATUS: RowSpec(
         required=frozenset({"rows", "sd_ok", "heap"}),
-        optional=frozenset({"drops", "errs", "batt"}),
+        optional=frozenset({"drops", "errs", "batt", "recov"}),
     ),
     # Periodic dump of what the radio believes about its neighbours.
     ROW_NODE: RowSpec(

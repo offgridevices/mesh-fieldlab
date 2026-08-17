@@ -14,6 +14,7 @@
 #include "config.h"
 #include "log_schema.h"
 #include "logfile.h"
+#include "recovery.h"
 #include "screen.h"
 #include "selftest.h"
 
@@ -24,7 +25,6 @@ namespace {
 bool g_booting = true;
 
 uint32_t g_lastStatus = 0;
-uint32_t g_lastReport = 0;
 uint32_t g_lastLed = 0;
 uint32_t g_screenOffAt = 0;
 uint32_t g_packetsSeen = 0;
@@ -39,6 +39,10 @@ uint8_t g_page = 0;
 
 Screen::NodeView g_view;
 SelfTest::Result g_selfTest;
+
+//: Kept past setup, because a card that arrives late still has to name its
+//: file, and the boot counter is the only name available before a clock is.
+uint32_t g_bootCount = 0;
 
 //: Per-neighbour tallies, so the neighbours page can say who and how well
 //: rather than only how many.
@@ -82,6 +86,10 @@ bool isOurOwn(const mt_packet_meta_t * meta) {
 }
 
 void onPacket(const mt_packet_meta_t * meta) {
+  // Our own transmissions prove the serial link is alive just as well as a
+  // stranger's, so liveness is noted before anything is filtered out.
+  Recovery::noteRadioContact(millis());
+
   // The clock is taken even from our own packets: they carry the radio's time
   // just as well, and refusing it would mean waiting on a stranger to speak
   // before this node could date its file.
@@ -122,13 +130,43 @@ void onPacket(const mt_packet_meta_t * meta) {
 }
 
 void onRadioConfig(const mt_radio_config_t * config) {
+  Recovery::noteRadioContact(millis());
   SelfTest::noteRadioConfig(config);
 }
 
 void onNodeReport(mt_node_t * node, mt_nr_progress_t progress) {
+  uint32_t now = millis();
+
+  // Every progress value counts, including the empty one that closes a report.
+  // What is being proved here is that the radio answered at all, not that it
+  // had anything useful to say.
+  Recovery::noteRadioContact(now);
+
   if (progress != MT_NR_IN_PROGRESS || node == nullptr) return;
   SelfTest::noteOwnNode(node);
-  if (!g_booting) LogFile::writeNode(node);
+
+  // A report the recovery tick asked for is a liveness probe. It refreshes
+  // this node's own view of itself, above, and then stops: writing forty rows
+  // every thirty seconds while a fault clears would cost more of the file than
+  // the fault did.
+  if (!g_booting && !Recovery::suppressNodeRows(now)) LogFile::writeNode(node);
+}
+
+// The BOOT row for a file that did not begin at power-on — because the card
+// arrived late, or was swapped. Without one the file cannot be interpreted at
+// all: nothing in it would say which preset, which region, or where the node
+// was stood.
+void writeResumeBoot(uint32_t now) {
+  SelfTest::refreshOwn(g_selfTest);
+  char extra[360];
+  SelfTest::toExtra(g_selfTest, g_bootCount, extra, sizeof(extra));
+  size_t used = strlen(extra);
+  // Seconds of session that happened before this file existed. Marks the file
+  // as a continuation rather than a power cycle, which otherwise looks
+  // identical to a node that rebooted itself in the field.
+  snprintf(extra + used, sizeof(extra) - used, ";resume=%lu",
+           (unsigned long)(now / 1000));
+  LogFile::writeBoot(extra);
 }
 
 // --- display ----------------------------------------------------------------
@@ -193,6 +231,53 @@ void forgetSelf() {
     g_peerCount--;
     return;
   }
+}
+
+// Act on whatever the recovery tick just changed.
+//
+// Two audiences and they want different things. The console is for somebody on
+// a bench watching a fault clear; the file is for whoever reads the card weeks
+// later and has to explain a hole in the middle of a session. Neither can be
+// reconstructed from the other, so both are written.
+void serviceRecovery(uint32_t now, const Recovery::Event & ev) {
+  // A brand-new file is empty apart from its header. Nothing else may be
+  // written until it can say how the node was configured.
+  if (ev.newFile) {
+    writeResumeBoot(now);
+    Serial.printf("card     : a card arrived — now logging to %s\n",
+                  LogFile::fileName());
+    Serial.printf("           %lu rows were formed with nowhere to put them and\n",
+                  (unsigned long)LogFile::dropped());
+    Serial.println("           are gone; everything from here is recorded.");
+  }
+
+  if (ev.lost != 0) {
+    char names[48];
+    Serial.printf("FAULT    : %s\n", Recovery::describe(ev.lost, names, sizeof(names)));
+  }
+
+  if (ev.recovered == 0) return;
+
+  char names[48];
+  Recovery::describe(ev.recovered, names, sizeof(names));
+  Serial.printf("recovered: %s\n", names);
+
+  // A status row rather than a row type of its own: STATUS already carries the
+  // card's health and the dropped-row count, which is most of what a recovery
+  // needs to say, and a new row type would mean every existing reader had to
+  // learn about it. The recov= key names what came back.
+  //
+  // Skipped when the file itself is new, because the BOOT row written a moment
+  // ago already marks that instant, and the ordinary status row will carry the
+  // dropped count within the minute.
+  if (!ev.newFile) {
+    g_lastStatus = now;
+    LogFile::writeStatus(ESP.getFreeHeap(), names);
+  }
+
+  // A late radio may have been counted as its own neighbour before it said who
+  // it was, because the "is this me?" test had nothing to compare against.
+  if (ev.recovered & Recovery::B_RADIO) forgetSelf();
 }
 
 // Debounced, edge-triggered. A held button must not page continuously, and a
@@ -269,7 +354,9 @@ void setup() {
   bool writable = mounted && LogFile::proveWritable();
   uint32_t freeMb = mounted ? LogFile::freeMegabytes() : 0;
 
-  uint32_t bootCount = LogFile::nextBootCount();
+  // From flash, not the card, so it is available even when the slot is empty —
+  // which is exactly the case where a file may have to be named later.
+  g_bootCount = LogFile::nextBootCount();
 
   set_packet_meta_callback(onPacket);
   set_radio_config_callback(onRadioConfig);
@@ -281,9 +368,9 @@ void setup() {
   // Open the file after the test so BOOT is genuinely the first row. The
   // thirty seconds of listening are spent counting neighbours, not logging;
   // losing them off the front of a two-hour session costs nothing.
-  if (writable && LogFile::open(NODE_SHORT_NAME, bootCount)) {
-    char extra[320];
-    SelfTest::toExtra(result, bootCount, extra, sizeof(extra));
+  if (writable && LogFile::open(NODE_SHORT_NAME, g_bootCount)) {
+    char extra[360];
+    SelfTest::toExtra(result, g_bootCount, extra, sizeof(extra));
     LogFile::writeBoot(extra);
     Serial.printf("logging  : %s\n", LogFile::fileName());
     if (!LogFile::isDated()) {
@@ -294,6 +381,9 @@ void setup() {
   } else {
     Serial.println("logging  : NOT RECORDING — the card is unusable");
     Serial.println("           the node still runs, so the fault is visible");
+    Serial.println("           Push a working card in and it starts a file on");
+    Serial.println("           its own, without a power cycle. Nothing heard");
+    Serial.println("           before that point is recoverable.");
   }
   Serial.println("----------------------------------------");
 
@@ -310,13 +400,16 @@ void setup() {
   g_view.lat    = result.lat;
   g_view.lon    = result.lon;
 
+  // Seeded with what the test concluded, so the first tick reports only what
+  // has genuinely changed since somebody was stood here watching.
+  Recovery::begin(NODE_SHORT_NAME, g_bootCount, result, onNodeReport);
+
   g_booting = false;
   refreshView();
   Screen::page(0, g_view);
   g_page = 0;
   g_screenOffAt = millis() + 30000;
   g_lastStatus = millis();
-  g_lastReport = millis();
 }
 
 void loop() {
@@ -330,12 +423,11 @@ void loop() {
     Serial.printf("clock    : time acquired — file is now %s\n", LogFile::fileName());
   }
 
-  // Likewise a radio that took longer to boot than the self-test waited.
-  if (SelfTest::recheckRadio(g_selfTest)) {
-    forgetSelf();
-    Serial.printf("radio    : answered late — node %lu\n",
-                  (unsigned long)my_node_num);
-  }
+  // Everything that can break and then stop being broken: the card, the radio,
+  // the position, the clock, the neighbours. Owns the node-report schedule too,
+  // so that asking the radio anything is one decision made in one place.
+  Recovery::Event ev = Recovery::tick(now, g_selfTest, g_peerCount);
+  serviceRecovery(now, ev);
 
   LogFile::tick(now);
 
@@ -343,17 +435,13 @@ void loop() {
     g_lastStatus = now;
     LogFile::writeStatus(ESP.getFreeHeap());
 #if SERIAL_ECHO
-    Serial.printf("status   %lu min  %lu packets  %lu rows  card %s\n",
+    Serial.printf("status   %lu min  %lu packets  %lu rows  %lu dropped  card %s\n",
                   (unsigned long)(now / 60000),
                   (unsigned long)g_packetsSeen,
                   (unsigned long)LogFile::rowsWritten(),
+                  (unsigned long)LogFile::dropped(),
                   LogFile::healthy() ? "ok" : "FAILED");
 #endif
-  }
-
-  if (now - g_lastReport >= NODE_REPORT_MS) {
-    g_lastReport = now;
-    mt_request_node_report(onNodeReport);
   }
 
   serviceButton(now);

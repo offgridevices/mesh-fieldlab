@@ -367,3 +367,114 @@ def test_a_node_that_heard_nothing_is_worth_knowing_about():
     result = validate_text(make_file(row(S.ROW_BOOT)))
     assert result.ok
     assert "NO_PACKETS" in codes(result)
+
+
+# ---------------------------------------------------------------------------
+# Recovering in the field
+#
+# A node that heals itself is the point of the retry loop, but the file it
+# leaves behind is shorter than the session it covers. Every check here exists
+# so that shortfall reaches whoever reads the card, instead of looking like a
+# clean run that happened to be quiet.
+# ---------------------------------------------------------------------------
+
+
+def boot_extra(**extra: str) -> str:
+    """The standard BOOT extra with recovery keys added."""
+    pairs = S.parse_extra(row(S.ROW_BOOT).split(",")[-1])
+    pairs.update(extra)
+    return S.format_extra(pairs)
+
+
+def status_extra(**extra: str) -> str:
+    pairs = {"rows": "9", "sd_ok": "1", "heap": "180000"}
+    pairs.update(extra)
+    return S.format_extra(pairs)
+
+
+def test_a_file_opened_mid_session_says_so():
+    # The card was pushed in twenty minutes after the node was switched on.
+    # Nothing heard before that exists anywhere, and the file must admit it.
+    result = validate_text(
+        make_file(
+            row(S.ROW_BOOT, uptime_ms=1_200_000, extra=boot_extra(resume="1200")),
+            row(S.ROW_PKT, uptime_ms=1_205_000, pkt_id=9001),
+        )
+    )
+    assert result.ok
+    assert "RESUMED" in codes(result)
+    assert result.summary.resumed_after_s == 1200
+    assert "20 min" in next(i.message for i in result.issues if i.code == "RESUMED")
+
+
+def test_a_file_that_began_at_power_on_is_not_flagged_as_resumed(good_file):
+    result = validate_text(good_file)
+    assert "RESUMED" not in codes(result)
+    assert result.summary.resumed_after_s == 0
+
+
+def test_dropped_rows_are_reported_once_not_per_status_row():
+    dropped = status_extra(drops="37")
+    result = validate_text(
+        make_file(
+            row(S.ROW_BOOT),
+            row(S.ROW_PKT, uptime_ms=5000, pkt_id=1),
+            row(S.ROW_STATUS, uptime_ms=60_000, extra=dropped),
+            row(S.ROW_STATUS, uptime_ms=120_000, extra=dropped),
+        )
+    )
+    assert result.ok
+    assert [i.code for i in result.issues].count("ROWS_DROPPED") == 1
+    assert result.summary.rows_dropped == 37
+
+
+def test_the_largest_drop_count_wins_not_the_last_one():
+    # The counter only ever climbs, but a file truncated mid-write can leave
+    # the rows out of order. Taking the maximum cannot under-report the hole.
+    result = validate_text(
+        make_file(
+            row(S.ROW_BOOT),
+            row(S.ROW_STATUS, uptime_ms=60_000, extra=status_extra(drops="12")),
+            row(S.ROW_STATUS, uptime_ms=120_000, extra=status_extra(drops="4")),
+        )
+    )
+    assert result.summary.rows_dropped == 12
+
+
+def test_a_fault_that_cleared_is_recorded_with_when_and_what():
+    result = validate_text(
+        make_file(
+            row(S.ROW_BOOT),
+            row(S.ROW_PKT, uptime_ms=5000, pkt_id=1),
+            row(
+                S.ROW_STATUS,
+                uptime_ms=600_000,
+                extra=status_extra(drops="4", recov="card+radio"),
+            ),
+        )
+    )
+    assert result.ok
+    assert result.summary.recoveries == [("card+radio", 600_000)]
+    message = next(i.message for i in result.issues if i.code == "RECOVERED")
+    assert "card+radio" in message
+    assert "10 min" in message
+
+
+def test_recovery_keys_are_recognised_rather_than_warned_about():
+    # They are part of the contract now. A reader that did not know them would
+    # emit EXTRA_UNKNOWN, which is how a real key gets quietly ignored.
+    result = validate_text(
+        make_file(
+            row(S.ROW_BOOT, extra=boot_extra(resume="60")),
+            row(S.ROW_PKT, uptime_ms=5000, pkt_id=1),
+            row(S.ROW_STATUS, uptime_ms=60_000, extra=status_extra(drops="0", recov="pos")),
+        )
+    )
+    assert "EXTRA_UNKNOWN" not in codes(result)
+
+
+def test_a_clean_run_carries_none_of_the_recovery_warnings(good_file):
+    result = validate_text(good_file, "LOG_N1_20260806_0706.csv")
+    assert result.issues == []
+    assert result.summary.recoveries == []
+    assert result.summary.rows_dropped == 0

@@ -357,15 +357,17 @@ bool positionUsable(const Result & r) {
   return r.lat != 0.0 || r.lon != 0.0;
 }
 
-bool recheckRadio(Result & r) {
-  // Already good, or still nothing — either way there is nothing to change.
-  if (r.radio_ok || my_node_num == 0) return false;
+bool reviewRadio(Result & r, bool alive) {
+  if (r.radio_ok == alive) return false;
 
-  // The radio answered after the boot test had given up on it. That is a
-  // working node, so stop showing it as a broken one: a fault that has cleared
-  // and still reads as a fault teaches people to ignore the screen.
-  r.radio_ok = true;
-  if (g_haveConfig) {
+  r.radio_ok = alive;
+
+  // On the way back up, take its settings again rather than trusting what was
+  // read before it went quiet. A radio that restarted may have come back
+  // configured differently — that is exactly what happens when somebody
+  // reflashes or reconfigures it — and a fault that has cleared but still
+  // reads as a fault teaches people to ignore the screen.
+  if (alive && g_haveConfig) {
     r.have_config    = g_config.has_lora;
     r.region         = g_config.region;
     r.preset         = g_config.modem_preset;
