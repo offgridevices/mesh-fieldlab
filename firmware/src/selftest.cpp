@@ -194,9 +194,23 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   // --- the radio ------------------------------------------------------------
   // my_node_num stays zero until the radio has answered, so it doubles as the
   // proof that wiring, baud rate and PROTO mode are all correct at once.
+  //
+  // It is only ever set by the reply to a request, though, and the library
+  // never sends one by itself. Ask first, then wait — waiting without having
+  // asked can only ever time out.
+  //
+  // Ask repeatedly, because the two boards share one supply and therefore boot
+  // together: the first ask usually lands on a radio that has not finished
+  // starting and is discarded in silence. The library has no retry of its own.
   uint32_t deadline = millis() + RADIO_WAIT_MS;
-  while ((int32_t)(millis() - deadline) < 0 && my_node_num == 0) {
-    mt_loop(millis());
+  uint32_t lastAsk = 0;
+  while (my_node_num == 0 && (int32_t)(millis() - deadline) < 0) {
+    uint32_t now = millis();
+    if (lastAsk == 0 || now - lastAsk >= RADIO_ASK_EVERY_MS) {
+      lastAsk = now;
+      if (nodeReportCb != nullptr) mt_request_node_report(nodeReportCb);
+    }
+    mt_loop(now);
     delay(10);
   }
   r.radio_ok = (my_node_num != 0);
@@ -239,9 +253,10 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   say("listening: %lu s for neighbours...", (unsigned long)(BOOT_LISTEN_MS / 1000));
 
   // --- who can we hear ------------------------------------------------------
-  // The report also carries our own entry, which is where the position and
-  // battery come from — the radio owns the battery, not the logger.
-  if (nodeReportCb != nullptr) mt_request_node_report(nodeReportCb);
+  // The report was already asked for above, and it is what woke the radio up;
+  // it also carries our own entry, which is where the position and battery
+  // come from — the radio owns the battery, not the logger. So there is
+  // nothing to ask for here, only time to spend listening.
   serviceUntil(millis() + BOOT_LISTEN_MS);
 
   // --- the clock ------------------------------------------------------------
@@ -297,6 +312,25 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   }
   say("battery  : %u%%", (unsigned)r.battery_pct);
   return r;
+}
+
+bool recheckRadio(Result & r) {
+  // Already good, or still nothing — either way there is nothing to change.
+  if (r.radio_ok || my_node_num == 0) return false;
+
+  // The radio answered after the boot test had given up on it. That is a
+  // working node, so stop showing it as a broken one: a fault that has cleared
+  // and still reads as a fault teaches people to ignore the screen.
+  r.radio_ok = true;
+  if (g_haveConfig) {
+    r.have_config    = g_config.has_lora;
+    r.region         = g_config.region;
+    r.preset         = g_config.modem_preset;
+    r.hop_limit      = g_config.hop_limit;
+    r.tx_enabled     = g_config.tx_enabled;
+    r.fixed_position = g_config.has_position && g_config.fixed_position;
+  }
+  return true;
 }
 
 void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {

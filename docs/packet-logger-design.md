@@ -577,11 +577,27 @@ Build **one** complete node and validate it end to end before assembling the oth
 - With the radio absent the self-test reports it and the node **carries on into the loop rather than halting**, which is the degradation behaviour the whole design depends on.
 - With the radio absent the clock gate (§9.2) is skipped rather than waiting out its timeout, so a bench test with no radio starts immediately.
 
+**Confirmed on the first unit, 17 August 2026, firmware 0.5.0** — radio wired and powered, one complete node:
+
+- The radio answers over `J7` at 38400 in `PROTO` mode. The screen shows the node number, `US`, `LONG_FAST` and hop limit 3, read back from the radio rather than assumed.
+- The clock arrives from the radio and is correct to the minute, so the file is dated.
+- Real packets from the surrounding mesh are received, counted per neighbour with RSSI, and written.
+- Both power directions work: the radio's `VDD` runs the logger, and the logger's `3V3` runs the radio. **Only the first is the field configuration** — see the battery note below.
+
+**Waiting for something you never asked for is not a timeout, it is a deadlock.** The first version of the boot self-test waited `RADIO_WAIT_MS` for `my_node_num` to become non-zero, having never sent a `want_config`. That value is only ever set by the reply to that request, and the library issues neither the request nor a retry on its own, so the check could not have passed on any node, ever — while packets still streamed in and the clock and neighbour checks went green, which made it read convincingly like a wiring fault. Two rules came out of it, and both are now in the code:
+
+- **Ask before waiting**, and keep asking. Both boards share one supply and therefore boot together, so the first request usually lands on a radio that is still starting and is dropped in silence.
+- **No check may latch at boot.** Card, radio, position, clock and neighbours are all re-read from live state on every screen refresh. A fault that has cleared but still shows red teaches people to stop believing the screen, which costs more than the original fault.
+
+**The radio's battery percentage is only meaningful when the radio is the power source.** Back-fed from the logger's 3.3 V rail it reports that rail as a nearly-flat cell — 9% on the bench. The battery belongs on the radio's `P2` with the switch in its positive lead (§5.3), which is the same direction the field build uses anyway.
+
 **A card can pass on the logger and still be dead.** The first card mounted on the ESP32 and accepted a written row, while macOS could not mount it at all and could not read back a filesystem it had just written. The microcontroller's FAT implementation is far more forgiving than a desktop's. Prove a new card on a computer — write a large file, eject, read it back, compare — before trusting it with a session. The replacement was verified that way over 100 MB.
 
-Still unproven: everything involving the radio, which is steps 3 onward.
+Still unproven on one node: the fixed position, and steps 7 onward. Nothing involving four nodes has been attempted.
 
-**Before step 3, the radio has to be configured** — Meshtastic flashed, the Serial module enabled in `PROTO` mode at the right pins and baud, region set, fixed position written. This is what `tools/configure_node.py` is for, and it is **not written yet**. Doing it by hand once is fine for proving the link; doing it by hand four times is how three nodes end up differing from the fourth in a way nobody wrote down.
+**The radio has to be configured before any of it means anything** — Meshtastic flashed, the Serial module enabled in `PROTO` mode at the right pins and baud, region set, fixed position written. This is what `tools/configure_node.py` is for, and it is **not written yet**; unit one was configured by hand with the §8 command. Doing it by hand once is fine for proving the link; doing it by hand four times is how three nodes end up differing from the fourth in a way nobody wrote down.
+
+**Read the configuration back after writing it.** The radios ship with the Serial module disabled and its pins unassigned, and a node in that state still joins the mesh, still relays, still looks healthy from a phone — it simply never speaks to its logger. `meshtastic --info` is the only thing that distinguishes it from a working node.
 
 1. Continuity and short checks with everything unpowered — 3.3 V to ground must read open.
 2. First power-up on the current-limited bench supply.

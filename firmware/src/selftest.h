@@ -54,6 +54,16 @@ void noteOwnNode(const mt_node_t * node);
 Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
            void (*nodeReportCb)(mt_node_t *, mt_nr_progress_t));
 
+// Re-examines a radio that did not answer in time, and updates the result in
+// place if it has since. Returns true only on the no-radio → radio transition,
+// so the caller can say so once rather than every loop.
+//
+// A radio can outlast the boot test's patience — it is a whole Meshtastic
+// device starting up, on the same supply, at the same moment. Latching that
+// first answer as final would leave a working node reporting a dead radio for
+// the rest of the session.
+bool recheckRadio(Result & r);
+
 // Renders the outcome as `extra` for the BOOT row, so the file records what
 // the screen said. Nobody remembers by the time the card is read.
 void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n);

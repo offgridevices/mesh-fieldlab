@@ -11,7 +11,7 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.4.1"
+#define LOGGER_VERSION    "0.5.0"
 
 // --- timezone --------------------------------------------------------------
 // A POSIX timezone rule, not a fixed offset. The two dates on the end are the
@@ -50,7 +50,18 @@
 #define STATUS_INTERVAL_MS  60000UL
 #define NODE_REPORT_MS      300000UL
 
-#define RADIO_WAIT_MS       15000UL   // Self-test: wait for the radio to answer
+// Self-test: how long to wait for the radio to answer, and how often to ask.
+//
+// Both boards come up off the same supply at the same instant, so the logger
+// is ready long before the radio has finished booting Meshtastic. Anything
+// asked in that window is dropped without a reply and the library never asks
+// twice, so the ask is repeated here until one lands.
+//
+// The wait only runs to the end when there is genuinely no radio; with one
+// attached it exits the moment the radio names itself, normally in seconds.
+#define RADIO_WAIT_MS       45000UL
+#define RADIO_ASK_EVERY_MS   3000UL
+
 #define BOOT_LISTEN_MS      30000UL   // Self-test: listen for neighbours
 #define SCREEN_WAKE_MS      10000UL   // How long a button press lights the screen
 

@@ -134,14 +134,32 @@ void refreshView() {
   Clock::dateText(g_view.dateText, sizeof(g_view.dateText));
   Clock::timeText(g_view.timeText, sizeof(g_view.timeText));
 
-  // The heard check goes green once anything has ever been heard, not only
-  // during the startup listen — a node that finds its neighbours late is
-  // working, and should stop showing a fault.
+  // Every check is re-read from live state on each refresh, never latched at
+  // boot. A node that finds its neighbours, its clock or its radio late is a
+  // working node, and a fault that has cleared but still shows red is how
+  // people learn to stop trusting the screen.
   g_view.ok[Screen::CHK_HEARD] = (g_peerCount > 0);
   g_view.ok[Screen::CHK_CARD]  = LogFile::healthy();
-  // Likewise the clock: it can arrive after the boot gave up waiting, and a
-  // node that is now correctly timed should not keep showing a fault for it.
   g_view.ok[Screen::CHK_CLOCK] = Clock::valid();
+  g_view.ok[Screen::CHK_RADIO] = g_selfTest.radio_ok;
+  g_view.ok[Screen::CHK_POS]   = g_selfTest.fixed_position;
+}
+
+// A packet that arrived before the radio had told us our own node number was
+// counted as a neighbour, because the "is this me?" test had nothing to
+// compare against yet. Drop that entry now that we know who we are.
+void forgetSelf() {
+  if (my_node_num == 0) return;
+  for (uint8_t i = 0; i < g_peerCount; i++) {
+    if (g_peer[i] != my_node_num) continue;
+    for (uint8_t j = i; j + 1 < g_peerCount; j++) {
+      g_peer[j]        = g_peer[j + 1];
+      g_peerPkts[j]    = g_peerPkts[j + 1];
+      g_peerRssiSum[j] = g_peerRssiSum[j + 1];
+    }
+    g_peerCount--;
+    return;
+  }
 }
 
 // Debounced, edge-triggered. A held button must not page continuously, and a
@@ -277,6 +295,19 @@ void loop() {
   // arrives. No-op on every loop after that.
   if (LogFile::adoptClockName(NODE_SHORT_NAME)) {
     Serial.printf("clock    : time acquired — file is now %s\n", LogFile::fileName());
+  }
+
+  // Likewise a radio that took longer to boot than the self-test waited.
+  if (SelfTest::recheckRadio(g_selfTest)) {
+    forgetSelf();
+    g_view.verdict = SelfTest::verdict(g_selfTest);
+    g_view.region  = SelfTest::regionName(g_selfTest.region);
+    g_view.preset  = SelfTest::presetName(g_selfTest.preset);
+    g_view.hops    = g_selfTest.hop_limit;
+    g_view.lat     = g_selfTest.lat;
+    g_view.lon     = g_selfTest.lon;
+    Serial.printf("radio    : answered late — node %lu\n",
+                  (unsigned long)my_node_num);
   }
 
   LogFile::tick(now);
