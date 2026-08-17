@@ -327,14 +327,29 @@ uv run validate-csv /Volumes/LOGGER/ --min-packets 100
 
 A GPS module cannot coexist with the logger (§2.3), and is not needed.
 
-**Position.** Nodes are static once set down. Record the coordinate on site, while standing there, and write it to the device over USB before walking away:
+**Position is set from a phone, on site, at the moment the node is placed.** Everything else about a node is configured once on a bench and never touched again; position is the one setting that cannot be, because it is not known until somebody is standing where the node will sit. Requiring a laptop for it would mean carrying one to every drop point.
+
+So the deployment step is: connect the Meshtastic app over Bluetooth, open the position settings, **enter the coordinate and switch fixed position on**, disconnect, walk away. The logger reads the result back off the radio and shows it, which is what makes the phone enough.
 
 ```bash
+# The same thing over USB, for a bench node or to check what the phone wrote.
 meshtastic --port <PORT> --setlat <LAT> --setlon <LON> --setalt <ALT> \
   --set position.fixed_position true
 ```
 
+**`fixed_position` does not create a coordinate. It freezes the one the node already has.** A node that has never held a position has nothing to freeze, so the switch does nothing at all — while the app shows it on, which is the trap. The order is therefore not optional:
+
+1. **Fixed position OFF.** A node that already considers itself fixed may ignore what the phone sends it.
+2. **Let the phone share its location with the node,** and wait for a send to actually happen. The share interval is a setting; shortening it to fifteen seconds is worth doing before a deployment day, because the default leaves somebody standing in a field waiting for a minute with no indication of why.
+3. **Confirm the node now holds a position** — it appears on the app's map.
+4. **Fixed position ON.** This is the step that makes it permanent, and it can only work now.
+5. **Confirm on the logger's screen** that the position block is filled before walking away.
+
+Step 5 is the one that matters, because it is the only check that reads the radio rather than the phone. A node with the flag set and no coordinate behind it joins the mesh, relays traffic, looks entirely healthy from the app, and records a whole session of rows that can never be tied to a place. The logger therefore treats position as set only when a coordinate is actually there (§9.1) — the flag alone is not evidence, and was believed for most of one bench session precisely because it looks like it is.
+
 Record the intended position as well as the one actually used — the difference between them matters when interpreting the results.
+
+**Position flags** control which fields ride along in a transmitted position. Most of them — satellites in view, heading, speed, dilution of precision, geoidal separation — come from a GPS receiver, and there is none here, so they carry nothing. Altitude is the one that earns its place. Whatever is chosen, **set all four nodes identically**: the cost of a stray flag is not airtime, it is another axis on which one node can quietly differ from the other three.
 
 **Altitude.** Do not take altitude from GPS. Consumer GPS vertical accuracy is ±10–20 m, roughly twice as bad as horizontal. Instead:
 
@@ -397,6 +412,8 @@ Notes that will cost you an afternoon if missed:
 - Keep the modem preset identical across all nodes and all runs. Changing spreading factor mid-experiment invalidates every comparison.
 
 Save `meshtastic --info` for every node alongside the logs. Config drift between nodes is the most common invisible way to ruin a test.
+
+**Redact it first.** `--info` prints the node's PKI **private key** in its `security` block, and its fixed position with it. A private key in a public repository lets anyone impersonate that node on the mesh, and publishing one cannot be undone — a rotation on every affected node is the only remedy. Strip the `security` block and commit the result as `config/<node>.redacted.json`; `.gitignore` is set so the raw dump cannot be added by accident. This is what `configure_node.py` will write, so the redaction is not left to whoever is holding the laptop that day.
 
 ## 9. Firmware behaviour
 
@@ -638,7 +655,7 @@ tools/                    Python, uv-managed
     configure_node.py     applies radio config, saves --info dump
     dem_lookup.py         lat/lon -> ground elevation
   tests/
-config/                   per-node --info dumps
+config/                   per-node --info dumps, redacted (§8) — raw ones are gitignored
 data/                     field logs (data/raw is gitignored)
 docs/
 ```

@@ -314,6 +314,49 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   return r;
 }
 
+void refreshOwn(Result & r) {
+  // The radio keeps reporting these for as long as it is running. Reading them
+  // once at boot and never again gives a battery gauge that cannot move and a
+  // position that cannot arrive — both of which matter most hours into a
+  // session, which is exactly when a boot-time snapshot is most out of date.
+  r.battery_pct = g_battery;
+  r.lat         = g_lat;
+  r.lon         = g_lon;
+  r.alt         = g_alt;
+
+  // The settings too. They arrive as a series of blocks rather than in one
+  // message, so the position block routinely lands after the moment the boot
+  // test looked — and a value read before it arrived is not a reading, it is
+  // the zero it was initialised to. Re-read rather than sample once.
+  //
+  // They can also change underneath us: somebody standing at the node with a
+  // phone is exactly how a position gets set, and the screen has to show that
+  // landing or it cannot be used to confirm the node is ready.
+  if (!g_haveConfig) return;
+  r.have_config    = g_config.has_lora;
+  r.region         = g_config.region;
+  r.preset         = g_config.modem_preset;
+  r.hop_limit      = g_config.hop_limit;
+  r.tx_enabled     = g_config.tx_enabled;
+  r.fixed_position = g_config.has_position && g_config.fixed_position;
+}
+
+bool positionUsable(const Result & r) {
+  // The setting on its own is not enough. Switching "fixed position" on
+  // without giving the radio a coordinate leaves the flag set with nothing
+  // behind it, which is how this node was found: configured, convincing, and
+  // recording rows that could never be tied to a place.
+  //
+  // A node that admits it has no position is recoverable — somebody walks back
+  // and sets it. A node that claims one it does not have is not, and the claim
+  // is only discovered when the session is being analysed.
+  if (!r.fixed_position) return false;
+  // Zero is treated as absent. The point in the Atlantic it really names is
+  // not somewhere these nodes will ever be, and every unset coordinate on
+  // earth reads as exactly this.
+  return r.lat != 0.0 || r.lon != 0.0;
+}
+
 bool recheckRadio(Result & r) {
   // Already good, or still nothing — either way there is nothing to change.
   if (r.radio_ok || my_node_num == 0) return false;
@@ -346,7 +389,7 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            r.card_mounted ? 1 : 0,
            r.card_writable ? 1 : 0,
            r.radio_ok ? 1 : 0,
-           r.fixed_position ? 1 : 0,
+           positionUsable(r) ? 1 : 0,
            r.clock_set ? 1 : 0,
            (unsigned)r.heard_count,
            r.display_ok ? 1 : 0,
@@ -366,9 +409,9 @@ const char * verdict(const Result & r) {
   // Ordered by what stops the session soonest. A card that cannot be written
   // means nothing is recorded at all; a silent radio means nothing arrives to
   // record; the rest degrade the result rather than ending it.
-  if (!r.card_writable)  return "NO CARD";
-  if (!r.radio_ok)       return "NO RADIO";
-  if (!r.fixed_position) return "NO POS";
+  if (!r.card_writable)   return "NO CARD";
+  if (!r.radio_ok)        return "NO RADIO";
+  if (!positionUsable(r)) return "NO POS";
   if (!r.clock_set)      return "NO CLOCK";
   if (r.heard_count == 0) return "ALONE";
   return "READY";

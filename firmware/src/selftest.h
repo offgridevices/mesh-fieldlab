@@ -54,6 +54,18 @@ void noteOwnNode(const mt_node_t * node);
 Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
            void (*nodeReportCb)(mt_node_t *, mt_nr_progress_t));
 
+// Re-reads the values the radio keeps reporting — battery and position — into
+// the result. Cheap, and meant to be called on every screen refresh: a battery
+// gauge frozen at its boot reading is worse than none, because it looks live.
+void refreshOwn(Result & r);
+
+// Whether the rows this node writes can honestly be tied to a place.
+//
+// Requires both the fixed-position setting AND a coordinate behind it. Turning
+// the setting on without entering a position is easy to do from a phone and
+// leaves the node looking configured while it is not.
+bool positionUsable(const Result & r);
+
 // Re-examines a radio that did not answer in time, and updates the result in
 // place if it has since. Returns true only on the no-radio → radio transition,
 // so the caller can say so once rather than every loop.

@@ -113,7 +113,15 @@ void onNodeReport(mt_node_t * node, mt_nr_progress_t progress) {
 // of any reaching back into the rest of the firmware.
 void refreshView() {
   uint32_t now = millis();
+  // Battery and position come from the radio and keep changing, so re-read
+  // them rather than showing what they were at boot.
+  SelfTest::refreshOwn(g_selfTest);
+  g_view.lat           = g_selfTest.lat;
+  g_view.lon           = g_selfTest.lon;
   g_view.batteryPct    = g_selfTest.battery_pct;
+  g_view.region        = SelfTest::regionName(g_selfTest.region);
+  g_view.preset        = SelfTest::presetName(g_selfTest.preset);
+  g_view.hops          = g_selfTest.hop_limit;
   g_view.uptimeSec     = now / 1000;
   g_view.packets       = g_packetsSeen;
   g_view.rows          = LogFile::rowsWritten();
@@ -142,7 +150,8 @@ void refreshView() {
   g_view.ok[Screen::CHK_CARD]  = LogFile::healthy();
   g_view.ok[Screen::CHK_CLOCK] = Clock::valid();
   g_view.ok[Screen::CHK_RADIO] = g_selfTest.radio_ok;
-  g_view.ok[Screen::CHK_POS]   = g_selfTest.fixed_position;
+  g_view.ok[Screen::CHK_POS]   = SelfTest::positionUsable(g_selfTest);
+  g_view.verdict               = SelfTest::verdict(g_selfTest);
 }
 
 // A packet that arrived before the radio had told us our own node number was
@@ -300,12 +309,6 @@ void loop() {
   // Likewise a radio that took longer to boot than the self-test waited.
   if (SelfTest::recheckRadio(g_selfTest)) {
     forgetSelf();
-    g_view.verdict = SelfTest::verdict(g_selfTest);
-    g_view.region  = SelfTest::regionName(g_selfTest.region);
-    g_view.preset  = SelfTest::presetName(g_selfTest.preset);
-    g_view.hops    = g_selfTest.hop_limit;
-    g_view.lat     = g_selfTest.lat;
-    g_view.lon     = g_selfTest.lon;
     Serial.printf("radio    : answered late — node %lu\n",
                   (unsigned long)my_node_num);
   }

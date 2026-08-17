@@ -280,5 +280,19 @@ notes.local/
 data/raw/
 *.raw.csv
 
+# ---------------------------------------------------------------------------
+# Radio configuration dumps.
+#
+# `meshtastic --info` prints the node's PKI **private key** in its security
+# block, alongside its fixed position. A private key on a public repository
+# lets anyone impersonate that node on the mesh, and it cannot be un-published.
+#
+# Raw dumps therefore never leave the machine. Commit only redacted ones —
+# `config/<node>.redacted.json`, with the security block removed — which is
+# all the settings record was ever for.
+# ---------------------------------------------------------------------------
+config/
+!config/*.redacted.json
+
 # macOS Finder litter. Turns up in any directory the Finder has opened.
 .DS_Store
