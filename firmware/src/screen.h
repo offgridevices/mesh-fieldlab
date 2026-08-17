@@ -40,6 +40,12 @@ struct NodeView {
   uint32_t freeMb        = 0;
   const char * fileName  = "";
 
+  //: Local date and time as text. The screen computes nothing — main fills
+  //: these from Clock, so what the clock page shows can never disagree with
+  //: the date on the filename.
+  char dateText[16]      = "no date";
+  char timeText[16]      = "--:--";
+
   uint32_t neighbour[MAX_NEIGHBOURS]      = {0};
   uint32_t neighbourPkts[MAX_NEIGHBOURS]  = {0};
   int16_t  neighbourRssi[MAX_NEIGHBOURS]  = {0};
@@ -47,7 +53,12 @@ struct NodeView {
 };
 
 //: How many pages the button cycles through.
-constexpr uint8_t PAGE_COUNT = 5;
+//:
+//: Page 0 is the summary. Pages 1..5 are the five state blocks in the order
+//: they appear in that summary row — C, R, P, K, H — each opening on the same
+//: block it came from, so the menu is the home screen read one at a time
+//: rather than a separate thing to learn. Page 6 is everything else.
+constexpr uint8_t PAGE_COUNT = 7;
 
 // Probes both addresses these modules ship with. Returns false if neither
 // answers, after which every other call here is a no-op.

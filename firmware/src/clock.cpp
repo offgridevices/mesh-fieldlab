@@ -58,6 +58,20 @@ void stamp(char * out, size_t n) {
   strftime(out, n, "%Y%m%d_%H%M", &tm);
 }
 
+void dateText(char * out, size_t n) {
+  struct tm tm;
+  if (!localNow(&tm)) { snprintf(out, n, "no date"); return; }
+  strftime(out, n, "%Y-%m-%d", &tm);
+}
+
+void timeText(char * out, size_t n) {
+  struct tm tm;
+  if (!localNow(&tm)) { snprintf(out, n, "--:--"); return; }
+  char hhmm[8];
+  strftime(hhmm, sizeof(hhmm), "%H:%M", &tm);
+  snprintf(out, n, "%s %s", hhmm, zoneName());
+}
+
 long utcOffsetSeconds() {
   if (!g_valid) return 0;
 

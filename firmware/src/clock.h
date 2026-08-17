@@ -50,6 +50,12 @@ uint32_t nowEpoch();
 // using anyway — check valid() first.
 void stamp(char * out, size_t n);
 
+// Local date and time as readable text, for the screen: "2026-08-17" and
+// "14:32 EDT". Both write a clearly-empty form when the clock is unset, so a
+// glance at the screen can never show a plausible-looking wrong time.
+void dateText(char * out, size_t n);
+void timeText(char * out, size_t n);
+
 // Offset from UTC in seconds, and the abbreviation in force at this instant
 // ("EST", "EDT"). Both are written into the BOOT row so a local-time filename
 // can always be mapped back to UTC without guessing.

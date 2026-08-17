@@ -131,11 +131,17 @@ void refreshView() {
     g_view.neighbourRssi[i] = (int16_t)(g_peerRssiSum[i] / (int32_t)g_peerPkts[i]);
   }
 
+  Clock::dateText(g_view.dateText, sizeof(g_view.dateText));
+  Clock::timeText(g_view.timeText, sizeof(g_view.timeText));
+
   // The heard check goes green once anything has ever been heard, not only
   // during the startup listen — a node that finds its neighbours late is
   // working, and should stop showing a fault.
   g_view.ok[Screen::CHK_HEARD] = (g_peerCount > 0);
   g_view.ok[Screen::CHK_CARD]  = LogFile::healthy();
+  // Likewise the clock: it can arrive after the boot gave up waiting, and a
+  // node that is now correctly timed should not keep showing a fault for it.
+  g_view.ok[Screen::CHK_CLOCK] = Clock::valid();
 }
 
 // Debounced, edge-triggered. A held button must not page continuously, and a

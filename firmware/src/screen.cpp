@@ -45,26 +45,35 @@ void battery(uint8_t x, uint8_t y, uint8_t pct) {
   }
 }
 
+//: The letters, in the order they appear in the summary row and in the order
+//: the button walks through the pages. Indexed by Check.
+const char * LABEL[CHK_COUNT] = {"C", "R", "P", "K", "H"};
+
+// One state block. Solid means passing; a hollow block also carries a slash,
+// so a failure cannot be mistaken for a smudge.
+//
+// Every block on the device comes through here — the summary row and the
+// detail pages alike — so the mark at the top of a detail page is literally
+// the same drawing as the one you pressed to get there.
+void block(uint8_t x, uint8_t y, const char * label, bool ok) {
+  small();
+  if (ok) {
+    g_oled.drawBox(x, y, 14, 11);
+    g_oled.setDrawColor(0);
+    g_oled.drawStr(x + 5, y + 9, label);
+    g_oled.setDrawColor(1);
+  } else {
+    g_oled.drawFrame(x, y, 14, 11);
+    g_oled.drawStr(x + 5, y + 9, label);
+    g_oled.drawLine(x + 1, y + 9, x + 12, y + 1);
+  }
+}
+
 // Five blocks in a fixed order. A passing check is solid, so all-good is an
 // even rhythm of marks and any failure is a hole in it — visible before the
-// letters are read. A failure also carries a slash, so it cannot be mistaken
-// for a smudge.
+// letters are read.
 void checks(const bool ok[CHK_COUNT], uint8_t y) {
-  static const char * LABEL[CHK_COUNT] = {"C", "R", "P", "K", "H"};
-  small();
-  for (uint8_t i = 0; i < CHK_COUNT; i++) {
-    uint8_t x = i * 20;
-    if (ok[i]) {
-      g_oled.drawBox(x, y, 14, 11);
-      g_oled.setDrawColor(0);
-      g_oled.drawStr(x + 5, y + 9, LABEL[i]);
-      g_oled.setDrawColor(1);
-    } else {
-      g_oled.drawFrame(x, y, 14, 11);
-      g_oled.drawStr(x + 5, y + 9, LABEL[i]);
-      g_oled.drawLine(x + 1, y + 9, x + 12, y + 1);
-    }
-  }
+  for (uint8_t i = 0; i < CHK_COUNT; i++) block(i * 20, y, LABEL[i], ok[i]);
 }
 
 void header(const char * left, const char * right) {
@@ -73,6 +82,23 @@ void header(const char * left, const char * right) {
   if (right) rightStr(W, 7, right);
   g_oled.drawHLine(0, 10, W);
 }
+
+// A detail page's header: the title, its rule, and the block this page is
+// about, sitting where the eye already expects a block to be.
+//
+// `right` is the page's headline fact, kept clear of the block.
+void detailHeader(const char * title, Check which, const bool ok[CHK_COUNT],
+                  const char * right) {
+  small();
+  g_oled.drawStr(0, 9, title);
+  block(W - 14, 0, LABEL[which], ok[which]);
+  if (right) rightStr(W - 18, 9, right);
+  g_oled.drawHLine(0, 12, W);
+}
+
+// The two body lines every detail page has room for. Naming them stops each
+// page inventing its own baselines and drifting a pixel out from the others.
+const uint8_t LINE1 = 22, LINE2 = 31;
 
 void ago(char * out, size_t n, uint32_t secs) {
   if (secs < 90) snprintf(out, n, "%lus", (unsigned long)secs);
@@ -91,43 +117,77 @@ void pageSummary(const NodeView & v) {
   battery(105, 20, v.batteryPct);
 }
 
-// 1 · Is it still recording?
-void pageActivity(const NodeView & v) {
-  char up[12], last[12], line[26];
-  uint32_t h = v.uptimeSec / 3600, m = (v.uptimeSec / 60) % 60;
-  snprintf(up, sizeof(up), "%luh%02lum", (unsigned long)h, (unsigned long)m);
+// 1 · C — is it recording, and will the card last the session?
+void pageCard(const NodeView & v) {
+  char mb[14];
+  snprintf(mb, sizeof(mb), "%lu MB", (unsigned long)v.freeMb);
+  detailHeader("CARD", CHK_CARD, v.ok, v.cardOk ? mb : "FAILED");
 
-  header("ACTIVITY", up);
-
-  // The packet count is the headline: it is the one number that proves the
-  // node is doing its job right now.
-  large();
-  snprintf(line, sizeof(line), "%lu", (unsigned long)v.packets);
-  g_oled.drawStr(0, 28, line);
-  uint8_t w = g_oled.getStrWidth(line);
   small();
-  g_oled.drawStr(w + 5, 28, "heard");
+  g_oled.drawStr(0, LINE1, v.fileName[0] ? v.fileName : "not recording");
 
-  if (v.everHeard) {
-    ago(last, sizeof(last), v.secsSinceLast);
-    snprintf(line, sizeof(line), "last %s ago", last);
-  } else {
-    snprintf(line, sizeof(line), "none yet");
-  }
-  rightStr(W, 20, v.cardOk ? "card ok" : "CARD BAD");
-  rightStr(W, 30, line);
+  // Rows climbing is the proof it is still working, not merely still on.
+  char line[26];
+  snprintf(line, sizeof(line), "%lu rows written", (unsigned long)v.rows);
+  g_oled.drawStr(0, LINE2, line);
 }
 
-// 2 · Who can it hear, and how well?
-void pageNeighbours(const NodeView & v) {
+// 2 · R — is it set up the same as the other three?
+void pageRadio(const NodeView & v) {
+  char node[14];
+  snprintf(node, sizeof(node), "%lu", (unsigned long)(v.myNode % 100000));
+  detailHeader("RADIO", CHK_RADIO, v.ok, v.ok[CHK_RADIO] ? node : "NO ANSWER");
+
+  small();
+  char line[26];
+  snprintf(line, sizeof(line), "%s  %s", v.region, v.preset);
+  g_oled.drawStr(0, LINE1, line);
+  snprintf(line, sizeof(line), "hop limit %u", (unsigned)v.hops);
+  g_oled.drawStr(0, LINE2, line);
+}
+
+// 3 · P — can these rows be tied to a place?
+void pagePosition(const NodeView & v) {
+  detailHeader("POSITION", CHK_POS, v.ok, v.ok[CHK_POS] ? "fixed" : "NOT SET");
+
+  small();
+  if (!v.ok[CHK_POS]) {
+    g_oled.drawStr(0, LINE1, "no fixed position set");
+    g_oled.drawStr(0, LINE2, "rows have no place");
+    return;
+  }
+
+  char line[26];
+  snprintf(line, sizeof(line), "lat %.5f", v.lat);
+  g_oled.drawStr(0, LINE1, line);
+  snprintf(line, sizeof(line), "lon %.5f", v.lon);
+  g_oled.drawStr(0, LINE2, line);
+}
+
+// 4 · K — can this file be lined up against the other three?
+void pageClock(const NodeView & v) {
+  detailHeader("CLOCK", CHK_CLOCK, v.ok, v.ok[CHK_CLOCK] ? nullptr : "NOT SET");
+
+  small();
+  if (!v.ok[CHK_CLOCK]) {
+    g_oled.drawStr(0, LINE1, "connect your phone to");
+    g_oled.drawStr(0, LINE2, "any node on the mesh");
+    return;
+  }
+  g_oled.drawStr(0, LINE1, v.dateText);
+  g_oled.drawStr(0, LINE2, v.timeText);
+}
+
+// 5 · H — who can it hear, and how well?
+void pageHeard(const NodeView & v) {
   char count[10];
   snprintf(count, sizeof(count), "%u", (unsigned)v.neighbourCount);
-  header("HEARD", count);
+  detailHeader("HEARD", CHK_HEARD, v.ok, count);
 
   small();
   if (v.neighbourCount == 0) {
-    g_oled.drawStr(0, 22, "nothing yet");
-    g_oled.drawStr(0, 31, "check the others are on");
+    g_oled.drawStr(0, LINE1, "nothing yet");
+    g_oled.drawStr(0, LINE2, "check the others are on");
     return;
   }
 
@@ -138,38 +198,34 @@ void pageNeighbours(const NodeView & v) {
     snprintf(line, sizeof(line), "%lu %ddB",
              (unsigned long)(v.neighbour[i] % 10000),
              (int)v.neighbourRssi[i]);
-    g_oled.drawStr(col * 64, 21 + row * 9, line);
+    g_oled.drawStr(col * 64, LINE1 + row * 9, line);
   }
 }
 
-// 3 · Is it set up the same as the other three?
-void pageRadio(const NodeView & v) {
-  char node[14];
-  snprintf(node, sizeof(node), "%lu", (unsigned long)(v.myNode % 100000));
-  header("RADIO", v.ok[CHK_RADIO] ? node : "NO ANSWER");
-
+// 6 · Everything with no block of its own: power, and how busy it has been.
+void pagePower(const NodeView & v) {
+  // Drawn to detailHeader's geometry by hand: this is the one page with no
+  // block of its own, and the battery shape takes that corner instead.
   small();
-  char line[26];
-  snprintf(line, sizeof(line), "%s  %s  hop %u", v.region, v.preset, (unsigned)v.hops);
-  g_oled.drawStr(0, 21, line);
-  snprintf(line, sizeof(line), "pos %s   clock %s",
-           v.ok[CHK_POS] ? "set" : "NO", v.ok[CHK_CLOCK] ? "set" : "NO");
-  g_oled.drawStr(0, 31, line);
-}
+  g_oled.drawStr(0, 9, "POWER");
+  battery(W - 21, 0, v.batteryPct);
+  g_oled.drawHLine(0, 12, W);
 
-// 4 · Will it last the session?
-void pageStorage(const NodeView & v) {
-  char mb[14];
-  snprintf(mb, sizeof(mb), "%lu MB", (unsigned long)v.freeMb);
-  header("CARD", v.cardOk ? mb : "FAILED");
+  char line[26], last[12];
+  uint32_t h = v.uptimeSec / 3600, m = (v.uptimeSec / 60) % 60;
+  snprintf(line, sizeof(line), "%u%%   up %luh%02lum",
+           (unsigned)v.batteryPct, (unsigned long)h, (unsigned long)m);
+  g_oled.drawStr(0, LINE1, line);
 
-  small();
-  g_oled.drawStr(0, 21, v.fileName[0] ? v.fileName : "not recording");
-
-  char line[26];
-  snprintf(line, sizeof(line), "%lu rows written", (unsigned long)v.rows);
-  g_oled.drawStr(0, 31, line);
-  battery(105, 20, v.batteryPct);
+  if (v.everHeard) {
+    ago(last, sizeof(last), v.secsSinceLast);
+    snprintf(line, sizeof(line), "%lu heard  last %s",
+             (unsigned long)v.packets, last);
+  } else {
+    snprintf(line, sizeof(line), "%lu heard  none yet",
+             (unsigned long)v.packets);
+  }
+  g_oled.drawStr(0, LINE2, line);
 }
 
 }  // namespace
@@ -209,12 +265,16 @@ void page(uint8_t index, const NodeView & v) {
   if (g_asleep) wake();
 
   g_oled.clearBuffer();
+  // The order is the summary row read one block at a time, then everything
+  // that has no block, then back to the summary.
   switch (index % PAGE_COUNT) {
-    case 0: pageSummary(v);    break;
-    case 1: pageActivity(v);   break;
-    case 2: pageNeighbours(v); break;
-    case 3: pageRadio(v);      break;
-    default: pageStorage(v);   break;
+    case 0: pageSummary(v);  break;
+    case 1: pageCard(v);     break;   // C
+    case 2: pageRadio(v);    break;   // R
+    case 3: pagePosition(v); break;   // P
+    case 4: pageClock(v);    break;   // K
+    case 5: pageHeard(v);    break;   // H
+    default: pagePower(v);   break;
   }
   g_oled.sendBuffer();
 }

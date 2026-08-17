@@ -417,7 +417,7 @@ loop()
   flush every 5 s or 10 rows, whichever comes first
   every 60 s: STATUS row
   every 300 s: refresh node report
-  on button press: wake display 10 s with the running summary, then blank
+  on button press: wake the display 10 s, or step one page deeper (§9.3)
   LED: slow blink healthy | double-blink packet logged recently | fast continuous SD failure
 ```
 
@@ -483,6 +483,27 @@ The deployment ritual this is built around: **switch a node on, connect your pho
 This is why the ritual matters: **a full power-down loses the time everywhere at once.** Neither the logger nor the radio has a battery-backed clock, so four nodes switched off on Tuesday and on again on Thursday all wake up blank together, with nobody left on the mesh to ask. Something outside the mesh has to reintroduce the time, and the phone in your pocket is the cheapest thing that can.
 
 `CLOCK_WAIT_MS` in `config.h` sets the give-up bound — ten minutes by default, far longer than pairing a phone takes and short enough that nobody sits through it by accident. Set it to `0` to restore the older behaviour of logging immediately regardless, or to something enormous to refuse to log at all without a clock.
+
+### 9.3 The menu
+
+The summary page carries five state blocks in a fixed order — **C R P K H** — and the button walks through them in exactly that order, one page each. The menu is the home screen read one block at a time, not a second thing to learn.
+
+| Press | Page | Block | Answers |
+|---|---|---|---|
+| — | Summary | all five | Can I walk away? |
+| 1 | Card | **C** | Is it recording, and will the card last? |
+| 2 | Radio | **R** | Is it set up like the other three? |
+| 3 | Position | **P** | Can these rows be tied to a place? |
+| 4 | Clock | **K** | Can this file be lined up against the others? |
+| 5 | Heard | **H** | Who can it hear, and how well? |
+| 6 | Power | *(battery)* | How much is left, and how busy has it been? |
+| 7 | back to Summary | | |
+
+Every detail page carries **the same block, drawn by the same code as the summary row** — solid for passing, hollow with a slash for failing — in the top-right corner where the eye already expects a block. That is what ties a page to the letter that sent you there: you press `P` because it looked wrong on the home screen, and the page you land on is still showing you `P`, still wrong, with the reason underneath.
+
+Page 6 is the catch-all for everything with no block of its own: battery, uptime, packets heard and how long ago the last one was.
+
+The first press wakes the screen wherever it was left rather than jumping home, so a second visit to the same node opens on what you were looking at last time.
 
 ## 10. Generating traffic to measure
 
