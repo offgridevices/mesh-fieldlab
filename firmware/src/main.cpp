@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <Meshtastic.h>
 
+#include "clock.h"
 #include "config.h"
 #include "log_schema.h"
 #include "logfile.h"
@@ -67,6 +68,11 @@ void notePeer(uint32_t node, int32_t rssi) {
 void onPacket(const mt_packet_meta_t * meta) {
   g_packetsSeen++;
   g_lastPacketAt = millis();
+
+  // The radio's clock is the only absolute time the logger ever sees, and it
+  // arrives stapled to packets. Take it at the first opportunity — before the
+  // row is written, so the file can be named the moment it becomes possible.
+  Clock::adopt(meta->rx_time);
 
 #if SERIAL_ECHO_PACKETS
   // The same row that reaches the card, in a form a person can read. A packet
@@ -192,6 +198,9 @@ void setup() {
                 NODE_SHORT_NAME, LOGGER_VERSION, LOG_SCHEMA_VERSION);
   Serial.println("----------------------------------------");
 
+  // Before anything asks for a local time. Costs nothing and cannot fail.
+  Clock::begin();
+
   // Radios off, clock down. The logger has nothing to transmit and must stay
   // awake for the serial stream, so this is all the power saving there is.
   setCpuFrequencyMhz(80);
@@ -216,10 +225,15 @@ void setup() {
   // thirty seconds of listening are spent counting neighbours, not logging;
   // losing them off the front of a two-hour session costs nothing.
   if (writable && LogFile::open(NODE_SHORT_NAME, bootCount)) {
-    char extra[256];
+    char extra[320];
     SelfTest::toExtra(result, bootCount, extra, sizeof(extra));
     LogFile::writeBoot(extra);
     Serial.printf("logging  : %s\n", LogFile::fileName());
+    if (!LogFile::isDated()) {
+      Serial.println("           NO CLOCK YET — this name is provisional.");
+      Serial.println("           The file is renamed with its date as soon as");
+      Serial.println("           a packet arrives carrying the time.");
+    }
   } else {
     Serial.println("logging  : NOT RECORDING — the card is unusable");
     Serial.println("           the node still runs, so the fault is visible");
@@ -252,6 +266,13 @@ void loop() {
   uint32_t now = millis();
 
   mt_loop(now);
+
+  // A file opened before the clock was known gets its date the moment one
+  // arrives. No-op on every loop after that.
+  if (LogFile::adoptClockName(NODE_SHORT_NAME)) {
+    Serial.printf("clock    : time acquired — file is now %s\n", LogFile::fileName());
+  }
+
   LogFile::tick(now);
 
   if (now - g_lastStatus >= STATUS_INTERVAL_MS) {

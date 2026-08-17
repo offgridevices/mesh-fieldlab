@@ -141,11 +141,26 @@ class _Checker:
     # -- whole-file checks ------------------------------------------------
 
     def _check_filename(self) -> None:
-        if not re.match(S.FILENAME_PATTERN, self.path.name):
+        m = re.match(S.FILENAME_PATTERN, self.path.name)
+        if not m:
             self.warn(
                 "FILENAME",
-                f"{self.path.name!r} is not LOG_<SHORTNAME>_<BOOTCOUNT>.csv; "
-                "the boot count in the name is what stops a reboot overwriting a run",
+                f"{self.path.name!r} is not LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv, "
+                "nor the LOG_<SHORTNAME>_<BOOTCOUNT>.csv fallback; the stamp in the "
+                "name is what keeps one power cycle to one file",
+            )
+            return
+
+        # The fallback name is not a formatting nit. It is the only outward
+        # sign that this node ran its whole session without ever learning the
+        # time, which decides whether its rows can be lined up against another
+        # node's at all.
+        if m.group("boot") is not None:
+            self.warn(
+                "FILENAME_NO_CLOCK",
+                f"{self.path.name!r} is the no-clock fallback name: this node never "
+                "heard a packet carrying the time, so its rows can only be read "
+                "relative to their own boot, not against another node's",
             )
 
     def _check_bytes(self) -> bool:

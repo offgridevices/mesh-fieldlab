@@ -11,7 +11,24 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.1.0"
+#define LOGGER_VERSION    "0.2.0"
+
+// --- timezone --------------------------------------------------------------
+// A POSIX timezone rule, not a fixed offset. The two dates on the end are the
+// daylight-saving changeovers, so the offset is correct year-round without the
+// firmware knowing anything about today's date.
+//
+// This affects log FILENAMES only, which are in local time because a person
+// reading a card wants to recognise the afternoon they collected it. Every
+// timestamp inside the rows stays UTC. Change this if the nodes are ever run
+// in another zone; the analysis does not depend on it either way.
+//
+//   US Eastern    EST5EDT,M3.2.0,M11.1.0
+//   US Central    CST6CDT,M3.2.0,M11.1.0
+//   US Mountain   MST7MDT,M3.2.0,M11.1.0
+//   US Pacific    PST8PDT,M3.2.0,M11.1.0
+//   UTC           UTC0
+#define TZ_POSIX          "EST5EDT,M3.2.0,M11.1.0"
 
 // --- wiring ----------------------------------------------------------------
 // See docs/packet-logger-design.md §5.2. Changing these means changing that

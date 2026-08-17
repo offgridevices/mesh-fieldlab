@@ -141,6 +141,10 @@ EXTRA_SPECS: dict[str, RowSpec] = {
             {
                 "name", "region", "hops", "hw", "libver", "batt", "disp",
                 "st_card", "st_write", "st_radio", "st_pos", "st_clock", "st_heard",
+                # The filename is local time; tz and utcoff are what turn it
+                # back into UTC without anyone having to remember which week
+                # the clocks changed.
+                "tz", "utcoff",
             }
         ),
     ),
@@ -162,10 +166,28 @@ EXTRA_SPECS: dict[str, RowSpec] = {
 STATUS_INTERVAL_MS = 60_000
 STATUS_GAP_TOLERANCE_MS = 180_000
 
-#: Log files are named LOG_<SHORTNAME>_<BOOTCOUNT>.csv — the boot count is in
-#: the filename so a brownout and reboot starts a new file instead of
-#: overwriting the previous one.
-FILENAME_PATTERN = r"^LOG_(?P<shortname>[A-Za-z0-9_-]{1,16})_(?P<boot>\d{1,6})\.csv$"
+#: Log files are named LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv, stamped in the
+#: node's LOCAL time at the moment logging started. One file per power cycle,
+#: so a session is always a whole file and no file grows without bound.
+#:
+#: The trailing -2, -3 form is the collision break for two boots inside the
+#: same minute, which is how a brownout loop shows up.
+#:
+#: A logger that boots with no clock cannot date its file. It falls back to
+#: LOG_<SHORTNAME>_<BOOTCOUNT>.csv and renames itself the moment the radio
+#: supplies a time — so the boot-count form surviving in a delivered set means
+#: that node never heard a single timestamped packet, and its rows can only be
+#: placed relative to their own boot. Both forms are accepted here; `analyze`
+#: reports which it found.
+#:
+#: Underscores are excluded from the short name on purpose: with one allowed,
+#: LOG_N1_20260817_1432.csv could equally be read as short name "N1_20260817"
+#: and boot count 1432, and the parse would be silently wrong.
+FILENAME_PATTERN = (
+    r"^LOG_(?P<shortname>[A-Za-z0-9-]{1,16})_"
+    r"(?:(?P<date>\d{8})_(?P<time>\d{4})(?:-(?P<seq>\d))?|(?P<boot>\d{1,6}))"
+    r"\.csv$"
+)
 
 
 def parse_extra(raw: str) -> dict[str, str]:

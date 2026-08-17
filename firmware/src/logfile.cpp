@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <SPI.h>
 
+#include "clock.h"
 #include "config.h"
 #include "log_schema.h"
 
@@ -12,9 +13,10 @@ namespace LogFile {
 namespace {
 
 File     g_file;
-char     g_name[32] = {0};
+char     g_name[64] = {0};
 bool     g_mounted = false;
 bool     g_healthy = false;
+bool     g_dated = false;      // is g_name the date-stamped form?
 uint32_t g_rows = 0;
 uint32_t g_sinceFlush = 0;
 uint32_t g_lastFlush = 0;
@@ -22,7 +24,7 @@ uint32_t g_lastRetry = 0;
 
 // One row is well under this. Sized with room to spare rather than tuned:
 // a truncated row is a corrupted measurement, and RAM is not the constraint.
-char g_line[320];
+char g_line[512];
 
 // Marks the card unusable and closes the handle, so the retry path starts
 // from a clean state rather than a half-open file.
@@ -41,6 +43,28 @@ void append(const char * line) {
   }
   g_rows++;
   g_sinceFlush++;
+}
+
+// The date-stamped name, in local time, never colliding with one already on
+// the card.
+//
+// Two boots inside the same minute is rare, and a brownout loop is the way it
+// happens — which is exactly the case where the earlier file is the one that
+// explains what went wrong. Overwriting it would destroy the evidence.
+void datedName(char * out, size_t n, const char * shortName) {
+  char when[16];
+  Clock::stamp(when, sizeof(when));
+  snprintf(out, n, "/LOG_%s_%s.csv", shortName, when);
+  for (int i = 2; i <= 9 && SD.exists(out); i++) {
+    snprintf(out, n, "/LOG_%s_%s-%d.csv", shortName, when, i);
+  }
+}
+
+// The name used when the clock is still unset. The boot counter is the only
+// thing that distinguishes one session from the next, and it is enough: it
+// survives power cuts, so nothing is ever overwritten.
+void bootName(char * out, size_t n, const char * shortName, uint32_t bootCount) {
+  snprintf(out, n, "/LOG_%s_%lu.csv", shortName, (unsigned long)bootCount);
 }
 
 // Every row starts with the same three fields, and every non-packet row
@@ -101,7 +125,13 @@ uint32_t nextBootCount() {
 }
 
 bool open(const char * shortName, uint32_t bootCount) {
-  snprintf(g_name, sizeof(g_name), "/LOG_%s_%lu.csv", shortName, (unsigned long)bootCount);
+  // If the radio has already told us the time — the usual case, because the
+  // self-test spends thirty seconds listening before this is called — the file
+  // is born with its date on it. If not, it opens under the boot counter and
+  // gets renamed later. Logging never waits for a clock.
+  g_dated = Clock::valid();
+  if (g_dated) datedName(g_name, sizeof(g_name), shortName);
+  else         bootName(g_name, sizeof(g_name), shortName, bootCount);
 
   g_file = SD.open(g_name, FILE_WRITE);
   if (!g_file) return false;
@@ -114,8 +144,44 @@ bool open(const char * shortName, uint32_t bootCount) {
   return true;
 }
 
+bool isDated() { return g_dated; }
+
+bool adoptClockName(const char * shortName) {
+  if (g_dated || !Clock::valid()) return false;
+  if (!g_healthy || !g_file) return false;
+
+  char target[sizeof(g_name)];
+  datedName(target, sizeof(target), shortName);
+
+  // Close before renaming: a rename under an open handle is the kind of thing
+  // that works on one FAT implementation and quietly corrupts on another.
+  g_file.flush();
+  g_file.close();
+
+  if (!SD.rename(g_name, target)) {
+    // The name is cosmetic and the data is not. Reopen what we had and carry
+    // on under the boot-counter name rather than dropping the session.
+    g_file = SD.open(g_name, FILE_APPEND);
+    if (!g_file) fail();
+    return false;
+  }
+
+  strncpy(g_name, target, sizeof(g_name) - 1);
+  g_name[sizeof(g_name) - 1] = '\0';
+
+  g_file = SD.open(g_name, FILE_APPEND);
+  if (!g_file) { fail(); return false; }
+
+  g_dated = true;
+  g_lastFlush = millis();
+  return true;
+}
+
 void writeBoot(const char * extra) {
-  int n = prefix(g_line, sizeof(g_line), 0);
+  // Once the clock is set every row carries absolute time, not just packet
+  // rows. That is what lets two nodes' files be lined up against each other
+  // across a quiet stretch when nothing was received.
+  int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
   snprintf(g_line + n, sizeof(g_line) - n, "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_BOOT ",%s\n", extra);
   append(g_line);
 }
@@ -148,7 +214,10 @@ void writePacket(const mt_packet_meta_t * meta) {
 }
 
 void writeStatus(uint32_t freeHeap) {
-  int n = prefix(g_line, sizeof(g_line), 0);
+  // Once the clock is set every row carries absolute time, not just packet
+  // rows. That is what lets two nodes' files be lined up against each other
+  // across a quiet stretch when nothing was received.
+  int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
   snprintf(g_line + n, sizeof(g_line) - n,
            "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_STATUS ",rows=%lu;heap=%lu;sd_ok=%d\n",
            (unsigned long)g_rows,
@@ -175,7 +244,10 @@ void writeNode(const mt_node_t * node) {
   }
   if (name[0] == '\0') { name[0] = '_'; name[1] = '\0'; }
 
-  int n = prefix(g_line, sizeof(g_line), 0);
+  // Once the clock is set every row carries absolute time, not just packet
+  // rows. That is what lets two nodes' files be lined up against each other
+  // across a quiet stretch when nothing was received.
+  int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
   snprintf(g_line + n, sizeof(g_line) - n,
            "%lu,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_NODE
            ",name=%s;lat=%.6f;lon=%.6f;batt=%u;last_heard=%lu\n",

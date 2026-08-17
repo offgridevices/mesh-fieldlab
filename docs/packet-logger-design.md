@@ -222,7 +222,7 @@ Three consequences worth knowing before the first field day:
 
 - **USB overrides it.** Plugging USB into the radio powers the node whether the switch is on or off. On the bench you will forget this and conclude the switch is broken.
 - **Charging needs the switch on.** With it off, the radio's charger is disconnected from the cell.
-- **Power-cycling is a normal operation, not a fault.** Each boot opens a new file with an incremented count in its name, so nothing is ever overwritten and no session is lost by turning a node off and on. This is why the boot counter exists.
+- **Power-cycling is a normal operation, not a fault.** Each boot opens a new file stamped with the date and time it started, so nothing is ever overwritten, no session is lost by turning a node off and on, and no single file grows without bound. Switch a node off on Tuesday and on again on Thursday and you get two files that say so on the outside.
 
 Why single-supply beats a split one: only one connector ever sees a battery, so the polarity check happens once; and if power fails, everything stops together and the log simply ends — rather than the logger dying silently while the radio keeps transmitting.
 
@@ -254,7 +254,15 @@ Estimated runtime on 2000 mAh, derated for real capacity, cutoff voltage and sum
 
 ## 6. File format
 
-One file per node per boot: `/LOG_<SHORTNAME>_<BOOTCOUNT>.csv`
+One file per node per power cycle: `/LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv`
+
+The stamp is the node's **local** time at the moment logging started — a person holding a box of cards wants to recognise the afternoon they collected them, and no file can grow without bound because switching a node off ends it. Two boots inside the same minute, which is how a brownout loop looks, break the collision with a trailing `-2`, `-3`.
+
+**Every timestamp inside the rows stays UTC.** People get local time on the outside of the file; machines get UTC on the inside, so no analysis ever has to reason about which side of a daylight-saving change a session landed on. The `BOOT` row records `tz` and `utcoff`, which is what lets the local-time name be turned back into UTC without anyone remembering which week the clocks changed.
+
+**When the node has no clock the file cannot be dated.** It opens as `/LOG_<SHORTNAME>_<BOOTCOUNT>.csv` instead and logging starts immediately — waiting for a clock would mean losing packets to get a nicer filename, which is the wrong trade. The moment a packet arrives carrying the time, the file is renamed in place. A boot-counter name surviving in a delivered set therefore means one specific thing: **that node never heard a single timestamped packet all session**, and its rows can only be read relative to their own boot. `validate-csv` reports this as `FILENAME_NO_CLOCK` rather than leaving it to be noticed.
+
+Where the time comes from at all is §8.
 
 ```
 schema_ver,uptime_ms,dev_rx_time,rx_node,tx_node,pkt_id,rx_rssi_dbm,rx_snr_db,
@@ -335,7 +343,24 @@ node altitude = ground elevation at (lat, lon) from a 1 m DEM
 
 Both terms are more accurate than any GPS module you could attach. This makes **measured height above ground a required field** on the field log sheet.
 
-**Time.** The Meshtastic CLI pushes its clock to the device on connect. Connecting all four nodes to one laptop in one session immediately before deployment gives every node correct absolute time, which is what makes `dev_rx_time` meaningful. Meshtastic also propagates time across the mesh from any node that has it.
+**Time.** The logger has no clock of its own. The XIAO has no battery-backed RTC, so every cold boot starts knowing nothing, and the only automatic source of real time is the radio — which stamps received packets with `rx_time`, and only knows the time itself if something told it.
+
+That makes the chain worth stating plainly, because every link can break:
+
+| Step | What supplies it | What happens if it is missing |
+|---|---|---|
+| Something knows the time | A GPS on any node, or a laptop running the Meshtastic CLI | **Nothing on the mesh has a clock, ever** |
+| The radio learns it | CLI on connect, or another node propagating it over the mesh | That node's rows have `dev_rx_time = 0` |
+| The logger learns it | `rx_time` on the first packet it receives | The file keeps its boot-counter name |
+
+The practical consequence: **a full power-down loses the time.** The nRF52840 in the radio has no battery-backed clock either, so a node switched off on Tuesday and switched on again on Thursday starts with no idea what day it is, and stays that way until a packet arrives from something that does know.
+
+Two ways to close that, and they are not equivalent:
+
+- **Give one node a GPS.** It reacquires time by itself on every power-up and seeds the whole mesh. This is the only option that survives an unattended power cycle in a field with no laptop present, which is exactly the workflow the logger is built for.
+- **Push the clock from the CLI before each deployment.** Connecting all four nodes to one laptop in one session gives every node correct absolute time and costs nothing extra. It has to be redone after every full power-down.
+
+Until one of those happens the logger still records everything — `uptime_ms` is unaffected, RSSI and SNR are unaffected, and per-link statistics within a single file are unaffected. What is lost is the ability to line one node's file up against another's, and the ability to date the file.
 
 This is **unverified** and must be tested on the bench. If it does not hold, fall back to `uptime_ms` plus a manually recorded start time — sufficient here, because the analysis computes session medians rather than time-of-flight.
 
@@ -378,7 +403,8 @@ setup()
   init display; if it does not answer, carry on regardless — see below
   read and increment boot counter in NVS
   run the boot self-test (§9.1), showing each result as it lands
-  open /LOG_<SHORTNAME>_<BOOTCOUNT>.csv, write header and BOOT row
+  open /LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv, write header and BOOT row
+    (or /LOG_<SHORTNAME>_<BOOTCOUNT>.csv if no clock yet, renamed later)
   init serial to the radio at 38400, register the packet-metadata callback
   request node report
 
@@ -421,7 +447,7 @@ Then `READY`, the filename, and the display blanks.
 Non-negotiable for unattended use:
 
 - **Flush often.** A field day that dies with forty minutes buffered in RAM is a wasted field day.
-- **Boot counter in the filename**, so a brownout-and-reboot creates a new file instead of overwriting the old one.
+- **Date and time in the filename**, so a brownout-and-reboot creates a new file instead of overwriting the old one, and so a card full of sessions sorts itself. The boot counter still backs it up when the clock is unset, and still breaks ties inside a single minute.
 - **On card failure, keep running.** Keep counting, signal on the LED, retry the mount. Do not halt — a node that stops logging is worse than one that logs a gap.
 
 Power management: WiFi off, Bluetooth off, CPU at 80 MHz. **No deep sleep** — the logger must continuously service the serial stream.
@@ -519,6 +545,7 @@ firmware/                 PlatformIO project for the logger board
   src/
     config.h              per-node settings; the only file that varies
     log_schema.h          the CSV contract, mirroring the Python schema
+    clock.*               absolute time, the timezone rule, the file stamp
     logfile.*             card, boot counter, rows, flushing, recovery
     screen.*              the OLED; optional at runtime
     selftest.*            the boot checks and how they are shown

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass, field
 
 from fieldlab import schema as S
@@ -224,6 +225,18 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                     emit(receiver, second, sender, pkt_id, rssi, snr, hops=1, offset_ms=120)
                     break
 
+    # A node with no clock cannot date its file, so it falls back to the boot
+    # counter — the same two names the real logger produces.
+    #
+    # The real logger stamps this in ITS local time. Synth stamps UTC, so one
+    # seed gives the same filenames on every machine; a test that changed
+    # answer with the developer's timezone would be worse than no test.
+    if c.set_clock:
+        stamp = time.strftime("%Y%m%d_%H%M", time.gmtime(c.start_epoch))
+        return {
+            f"LOG_{n.name}_{stamp}.csv": "\n".join(n.lines) + "\n"
+            for n in nodes
+        }
     return {
         f"LOG_{n.name}_{c.boot_count}.csv": "\n".join(n.lines) + "\n"
         for n in nodes

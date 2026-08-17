@@ -279,3 +279,6 @@ notes.local/
 # ---------------------------------------------------------------------------
 data/raw/
 *.raw.csv
+
+# macOS Finder litter. Turns up in any directory the Finder has opened.
+.DS_Store

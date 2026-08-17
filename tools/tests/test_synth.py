@@ -8,6 +8,9 @@ and asymmetry all depend on.
 
 from __future__ import annotations
 
+import re
+import time
+
 import pytest
 
 from fieldlab import schema as S
@@ -26,7 +29,29 @@ def test_every_generated_file_passes_the_checker():
 def test_one_file_per_node():
     files = synth_session(MeshConfig(node_count=4))
     assert len(files) == 4
-    assert set(files) == {f"LOG_N{i}_1.csv" for i in range(1, 5)}
+    stamp = time.strftime("%Y%m%d_%H%M", time.gmtime(MeshConfig().start_epoch))
+    assert set(files) == {f"LOG_N{i}_{stamp}.csv" for i in range(1, 5)}
+
+
+def test_a_node_with_no_clock_falls_back_to_the_boot_counter():
+    # A logger that never learns the time cannot date its file. The name is
+    # the only place that fact survives to whoever reads the card.
+    files = synth_session(MeshConfig(node_count=4, set_clock=False, boot_count=9))
+    assert set(files) == {f"LOG_N{i}_9.csv" for i in range(1, 5)}
+    for name in files:
+        assert re.match(S.FILENAME_PATTERN, name), name
+
+
+def test_the_dated_name_is_not_misread_as_a_boot_counter():
+    # LOG_N1_20260806_0706.csv could be parsed as short name "N1_20260806"
+    # and boot count 0706 if the pattern allowed underscores in the name.
+    # That would be a silent misparse, not an error, so it is pinned here.
+    m = re.match(S.FILENAME_PATTERN, "LOG_N1_20260806_0706.csv")
+    assert m is not None
+    assert m.group("shortname") == "N1"
+    assert m.group("date") == "20260806"
+    assert m.group("time") == "0706"
+    assert m.group("boot") is None
 
 
 def test_the_same_transmission_appears_in_several_files():

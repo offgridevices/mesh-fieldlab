@@ -21,13 +21,27 @@ def error_codes(result) -> set[str]:
 
 
 def test_a_well_formed_file_passes_cleanly(good_file):
-    result = validate_text(good_file, "LOG_N1_7.csv")
+    result = validate_text(good_file, "LOG_N1_20260806_0706.csv")
     assert result.ok
     assert result.issues == []
     assert result.summary.rx_node == RX_NODE
     assert result.summary.boot_count == "7"
     assert result.summary.firmware == "2.5.4"
     assert result.summary.by_row_type[S.ROW_PKT] == 2
+
+
+def test_the_boot_counter_name_is_accepted_but_flagged(good_file):
+    # It is a legal name — the logger writes it when it has no clock — but it
+    # means the file cannot be lined up against another node's, and that has
+    # to reach whoever is reading the results.
+    result = validate_text(good_file, "LOG_N1_7.csv")
+    assert result.ok
+    assert codes(result) == {"FILENAME_NO_CLOCK"}
+
+
+def test_an_unrecognisable_name_is_flagged(good_file):
+    result = validate_text(good_file, "session3.csv")
+    assert "FILENAME" in codes(result)
 
 
 def test_direct_packets_are_counted_per_ordered_link(good_file):

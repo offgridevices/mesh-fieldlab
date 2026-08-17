@@ -2,21 +2,17 @@
 
 #include <stdarg.h>
 
+#include "clock.h"
 #include "config.h"
 #include "screen.h"
 
 namespace SelfTest {
 namespace {
 
-// Seconds since the epoch at 2020-01-01. Anything below this is an unset or
-// nonsense clock rather than a real reading.
-const uint32_t EPOCH_FLOOR = 1577836800UL;
-
 const uint8_t MAX_NEIGHBOURS = 8;
 
 mt_radio_config_t g_config;
 bool     g_haveConfig = false;
-bool     g_clockSet   = false;
 uint8_t  g_battery    = 0;
 double   g_lat        = 0.0;
 double   g_lon        = 0.0;
@@ -65,7 +61,10 @@ void noteRadioConfig(const mt_radio_config_t * config) {
 
 void notePacket(const mt_packet_meta_t * meta) {
   rememberHeard(meta->from);
-  if (meta->rx_time >= EPOCH_FLOOR) g_clockSet = true;
+  // Whether the clock is set is not tracked here — Clock owns that, and owns
+  // it for the whole firmware, so the screen, the filename and the BOOT row
+  // can never disagree about it.
+  Clock::adopt(meta->rx_time);
 }
 
 void noteOwnNode(const mt_node_t * node) {
@@ -194,7 +193,7 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   serviceUntil(millis() + BOOT_LISTEN_MS);
 
   r.heard_count = g_heardCount;
-  r.clock_set   = g_clockSet;
+  r.clock_set   = Clock::valid();
   r.battery_pct = g_battery;
   r.lat         = g_lat;
   r.lon         = g_lon;
@@ -205,7 +204,16 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   for (uint8_t i = 0; i < g_heardCount; i++) {
     say("           node %lu", (unsigned long)g_heard[i]);
   }
-  say("clock    : %s", r.clock_set ? "set" : "NOT SET — rows are relative to boot only");
+  if (r.clock_set) {
+    char when[16];
+    Clock::stamp(when, sizeof(when));
+    say("clock    : set — %s local (%s, UTC%+ld)",
+        when, Clock::zoneName(), Clock::utcOffsetSeconds() / 3600);
+  } else {
+    say("clock    : NOT SET — rows are relative to boot only, and the file");
+    say("           cannot be dated. Nothing on this mesh knows the time:");
+    say("           give one node a GPS, or set it with the Meshtastic CLI.");
+  }
   say("battery  : %u%%", (unsigned)r.battery_pct);
   return r;
 }
@@ -216,7 +224,7 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            ";boot=%lu;preset=%s;region=%s;hops=%u"
            ";lat=%.6f;lon=%.6f;alt=%ld"
            ";st_card=%d;st_write=%d;st_radio=%d;st_pos=%d;st_clock=%d;st_heard=%u"
-           ";disp=%d;batt=%u",
+           ";disp=%d;batt=%u;tz=%s;utcoff=%ld",
            (unsigned long)bootCount,
            presetName(r.preset), regionName(r.region), (unsigned)r.hop_limit,
            r.lat, r.lon, (long)r.alt,
@@ -227,7 +235,12 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            r.clock_set ? 1 : 0,
            (unsigned)r.heard_count,
            r.display_ok ? 1 : 0,
-           (unsigned)r.battery_pct);
+           (unsigned)r.battery_pct,
+           // The filename is local time; these two are what let any reader
+           // turn it back into UTC without knowing where the node was or what
+           // the daylight-saving rules were that week.
+           Clock::zoneName(),
+           Clock::utcOffsetSeconds());
 }
 
 const char * verdict(const Result & r) {
