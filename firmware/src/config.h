@@ -11,7 +11,7 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.6.1"
+#define LOGGER_VERSION    "0.7.0"
 
 // --- timezone --------------------------------------------------------------
 // A POSIX timezone rule, not a fixed offset. The two dates on the end are the

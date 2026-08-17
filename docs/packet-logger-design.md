@@ -608,6 +608,14 @@ Build **one** complete node and validate it end to end before assembling the oth
 
 **The radio's battery percentage is only meaningful when the radio is the power source.** Back-fed from the logger's 3.3 V rail it reports that rail as a nearly-flat cell — 9% on the bench. The battery belongs on the radio's `P2` with the switch in its positive lead (§5.3), which is the same direction the field build uses anyway.
 
+**First real capture, 17 August 2026 — 56 minutes, 421 rows, read back off the card and put through the checker and the analysis.** The format survived contact with the firmware, which is what writing the checker first was for. Three things came out of it:
+
+- **A node logs its own transmissions.** The radio hands back everything it sends over the same serial link, with no RSSI and no SNR, and 37 of 82 packet rows were ours. Left in, they would have been averaged into the link statistics as perfect receptions at 0 dBm — more of them than there were real ones. The logger now drops any packet it originated, keeping only genuine receptions, and still takes the clock from them.
+- **`channel` is not always a channel.** The protocol reuses that field to carry a channel *hash* whenever the payload is encrypted, which it says plainly in `mesh.proto`. A logger on a shared channel sees this constantly — 10 and 170 inside the first hour — and the checker was rejecting honest rows for it.
+- **One MQTT packet condemned a clean fifty-six-minute file.** Traffic reaching the mesh through an internet gateway measures nothing about a radio path and the analysis drops it, but on any shared channel some will always arrive. It is a warning now. A checker that fails every real file is a checker people run with their eyes shut.
+
+With those corrected the capture reduces to one warning, and the analysis produces its first real link: a node in the same room at **−28 dBm, +6.2 dB SNR, p10–p90 spread of 2 dB** over five packets.
+
 **A card can pass on the logger and still be dead.** The first card mounted on the ESP32 and accepted a written row, while macOS could not mount it at all and could not read back a filesystem it had just written. The microcontroller's FAT implementation is far more forgiving than a desktop's. Prove a new card on a computer — write a large file, eject, read it back, compare — before trusting it with a session. The replacement was verified that way over 100 MB.
 
 Still unproven on one node: the fixed position, and steps 7 onward. Nothing involving four nodes has been attempted.

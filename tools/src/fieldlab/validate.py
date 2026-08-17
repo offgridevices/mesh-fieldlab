@@ -338,10 +338,16 @@ class _Checker:
             self.warn("PKT_ID", "pkt_id=0; this row cannot be deduplicated against flood copies", lineno)
 
         if int(nums["via_mqtt"]) != 0:
-            self.err(
+            # A warning, not an error. These rows measure nothing about the
+            # radio path and the analysis drops them — but on any shared
+            # channel a few will always arrive, and calling one an error
+            # condemned an otherwise clean fifty-six-minute capture as
+            # unusable. A checker that fails every real file is a checker
+            # people learn to run with their eyes shut.
+            self.warn(
                 "VIA_MQTT",
-                "packet arrived over MQTT rather than the air; an internet gateway is "
-                "polluting the run and this row measures nothing about the radio path",
+                "packet arrived over MQTT rather than the air; excluded from measurement, "
+                "and a sign an internet gateway is relaying this channel",
                 lineno,
             )
 

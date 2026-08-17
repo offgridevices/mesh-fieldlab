@@ -88,7 +88,16 @@ COLUMNS: tuple[Column, ...] = (
     Column("via_mqtt", "uint", "1 if the packet came in over the internet rather than the air", 0, 1, packet_only=True),
     Column("portnum", "uint", "Application port; 0 when the payload could not be decoded", 0, UINT32_MAX, packet_only=True),
     Column("payload_size", "uint", "Payload bytes", 0, 256, packet_only=True),
-    Column("channel", "uint", "Channel index", 0, HOP_MAX, packet_only=True),
+    # Not always an index. The protocol reuses this field to carry a channel
+    # *hash* whenever the payload is encrypted, and says so in mesh.proto:
+    # "Very briefly, while sending and receiving deep inside the device Router
+    # code, this field instead contains the 'channel hash' instead of the
+    # index. This 'trick' is only used while the payload_variant is an
+    # 'encrypted'." A logger sitting on a public mesh sees plenty of traffic it
+    # holds no key for, so hashes are normal rather than exceptional — real
+    # captures produced 10 and 170 within the first hour. Range-checking this
+    # as an index rejects honest rows.
+    Column("channel", "uint", "Channel index, or a channel hash on an undecoded packet", 0, BYTE_MAX, packet_only=True),
     Column("row_type", "enum", "Which kind of row this is", values=ROW_TYPES),
     Column("extra", "extra", "Key=value detail for non-packet rows; empty on PKT rows"),
 )

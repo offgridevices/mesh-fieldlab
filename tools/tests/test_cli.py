@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from conftest import make_file, row
+from conftest import RX_NODE, make_file, row
 from fieldlab import schema as S
 from fieldlab.cli import EXIT_OK, EXIT_PROBLEMS, EXIT_USAGE, main, synth_main
 
@@ -22,10 +22,12 @@ def test_a_good_file_exits_zero(tmp_path, good_file, capsys):
 
 
 def test_a_bad_file_exits_nonzero(tmp_path, capsys):
-    text = make_file(row(S.ROW_BOOT), row(S.ROW_PKT, via_mqtt=1))
+    # A node cannot receive its own transmission over the air, so this really
+    # is a broken row rather than a polluted one.
+    text = make_file(row(S.ROW_BOOT), row(S.ROW_PKT, tx_node=RX_NODE))
     path = write(tmp_path, "LOG_N1_7.csv", text)
     assert main([str(path)]) == EXIT_PROBLEMS
-    assert "VIA_MQTT" in capsys.readouterr().out
+    assert "SELF_RECEPTION" in capsys.readouterr().out
 
 
 def test_strict_turns_warnings_into_failure(tmp_path, good_file):

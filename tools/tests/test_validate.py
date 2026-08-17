@@ -172,9 +172,21 @@ def test_a_node_cannot_receive_its_own_transmission():
     assert "SELF_RECEPTION" in error_codes(validate_text(text))
 
 
-def test_packets_arriving_over_the_internet_invalidate_the_measurement():
-    text = make_file(row(S.ROW_BOOT), row(S.ROW_PKT, via_mqtt=1))
-    assert "VIA_MQTT" in error_codes(validate_text(text))
+def test_packets_arriving_over_the_internet_are_flagged_but_do_not_condemn_the_file():
+    # Excluded from measurement, never a reason to throw a capture away: on any
+    # shared channel a gateway will relay something eventually, and a real
+    # fifty-six-minute bench file was rejected outright over a single row.
+    result = validate_text(make_file(row(S.ROW_BOOT), row(S.ROW_PKT, via_mqtt=1)))
+    assert result.ok
+    assert "VIA_MQTT" in codes(result)
+
+
+def test_an_all_mqtt_file_still_reports_every_polluted_row():
+    text = make_file(
+        row(S.ROW_BOOT), row(S.ROW_PKT, via_mqtt=1), row(S.ROW_PKT, via_mqtt=1)
+    )
+    result = validate_text(text)
+    assert sum(1 for i in result.issues if i.code == "VIA_MQTT") == 2
 
 
 def test_zero_rssi_marks_a_locally_originated_row():

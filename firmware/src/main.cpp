@@ -65,14 +65,38 @@ void notePeer(uint32_t node, int32_t rssi) {
 
 // --- callbacks --------------------------------------------------------------
 
+// True for a packet this node originated, which the radio hands back over the
+// serial link as it sends. It never travelled through the air to get here, so
+// it carries no RSSI and no SNR and is not a measurement of anything.
+//
+// Left in, these outnumbered the real receptions on the first bench capture —
+// thirty-seven rows of zeroes against forty-five genuine ones — and every one
+// of them would have been averaged into the link statistics as a perfect
+// reception at 0 dBm.
+bool isOurOwn(const mt_packet_meta_t * meta) {
+  if (my_node_num == 0 || meta->from != my_node_num) return false;
+  // A rebroadcast of our own packet, heard back off a neighbour, IS a real
+  // reception and worth keeping. The absence of a signal reading is what
+  // separates the two.
+  return meta->rx_rssi == 0;
+}
+
 void onPacket(const mt_packet_meta_t * meta) {
+  // The clock is taken even from our own packets: they carry the radio's time
+  // just as well, and refusing it would mean waiting on a stranger to speak
+  // before this node could date its file.
+  Clock::adopt(meta->rx_time);
+
+  if (isOurOwn(meta)) {
+#if SERIAL_ECHO_PACKETS
+    Serial.printf("sent from us  id %lu  (not logged — not a reception)\n",
+                  (unsigned long)meta->id);
+#endif
+    return;
+  }
+
   g_packetsSeen++;
   g_lastPacketAt = millis();
-
-  // The radio's clock is the only absolute time the logger ever sees, and it
-  // arrives stapled to packets. Take it at the first opportunity — before the
-  // row is written, so the file can be named the moment it becomes possible.
-  Clock::adopt(meta->rx_time);
 
 #if SERIAL_ECHO_PACKETS
   // The same row that reaches the card, in a form a person can read. A packet
