@@ -499,9 +499,18 @@ The summary page carries five state blocks in a fixed order — **C R P K H** �
 | 6 | Power | *(battery)* | How much is left, and how busy has it been? |
 | 7 | back to Summary | | |
 
-Every detail page carries **the same block, drawn by the same code as the summary row** — solid for passing, hollow with a slash for failing — in the top-right corner where the eye already expects a block. That is what ties a page to the letter that sent you there: you press `P` because it looked wrong on the home screen, and the page you land on is still showing you `P`, still wrong, with the reason underneath.
+Every detail page opens with **the same block, drawn by the same code as the summary row** — solid for passing, hollow with a slash for failing — in the top-left corner, ahead of the title:
 
-Page 6 is the catch-all for everything with no block of its own: battery, uptime, packets heard and how long ago the last one was.
+```
+[C] CARD                 1871 MB
+--------------------------------
+/LOG_N1_20260817_1432.csv
+5218 rows written
+```
+
+Read left to right, that is the order the question is actually asked: which check this is, what it is called, and how it is doing. The block leads because it is the thing that was wrong on the summary row — you pressed through to find out about that mark, so it is what the page opens with. You press `P` because it looked wrong on the home screen, and the page you land on is still showing you `P`, still wrong, with the reason underneath.
+
+Page 6 is the catch-all for everything with no block of its own: battery, uptime, packets heard and how long ago the last one was. The battery shape stands in the icon's place there, so the run of pages keeps its rhythm.
 
 The first press wakes the screen wherever it was left rather than jumping home, so a second visit to the same node opens on what you were looking at last time.
 

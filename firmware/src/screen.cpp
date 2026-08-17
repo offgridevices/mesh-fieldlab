@@ -76,23 +76,24 @@ void checks(const bool ok[CHK_COUNT], uint8_t y) {
   for (uint8_t i = 0; i < CHK_COUNT; i++) block(i * 20, y, LABEL[i], ok[i]);
 }
 
-void header(const char * left, const char * right) {
-  small();
-  g_oled.drawStr(0, 7, left);
-  if (right) rightStr(W, 7, right);
-  g_oled.drawHLine(0, 10, W);
-}
+//: Where a detail page's title starts, clear of the block to its left.
+const uint8_t TITLE_X = 18;
 
-// A detail page's header: the title, its rule, and the block this page is
-// about, sitting where the eye already expects a block to be.
+// A detail page's header, read left to right in the order the question is
+// asked: which check this is, what it is called, and how it is doing.
 //
-// `right` is the page's headline fact, kept clear of the block.
+//   [C] CARD                1871 MB
+//   -------------------------------
+//
+// The block leads because it is the thing that was wrong on the summary row —
+// you pressed through to this page to find out about that mark, so it is what
+// the page opens with. `right` is the page's headline fact.
 void detailHeader(const char * title, Check which, const bool ok[CHK_COUNT],
                   const char * right) {
+  block(0, 0, LABEL[which], ok[which]);
   small();
-  g_oled.drawStr(0, 9, title);
-  block(W - 14, 0, LABEL[which], ok[which]);
-  if (right) rightStr(W - 18, 9, right);
+  g_oled.drawStr(TITLE_X, 9, title);
+  if (right) rightStr(W, 9, right);
   g_oled.drawHLine(0, 12, W);
 }
 
@@ -205,16 +206,20 @@ void pageHeard(const NodeView & v) {
 // 6 · Everything with no block of its own: power, and how busy it has been.
 void pagePower(const NodeView & v) {
   // Drawn to detailHeader's geometry by hand: this is the one page with no
-  // block of its own, and the battery shape takes that corner instead.
+  // block of its own, so the battery shape stands in the icon's place and the
+  // run of pages keeps its rhythm.
+  char pct[8];
+  snprintf(pct, sizeof(pct), "%u%%", (unsigned)v.batteryPct);
+  battery(0, 0, v.batteryPct);
   small();
-  g_oled.drawStr(0, 9, "POWER");
-  battery(W - 21, 0, v.batteryPct);
+  g_oled.drawStr(25, 9, "POWER");
+  rightStr(W, 9, pct);
   g_oled.drawHLine(0, 12, W);
 
   char line[26], last[12];
   uint32_t h = v.uptimeSec / 3600, m = (v.uptimeSec / 60) % 60;
-  snprintf(line, sizeof(line), "%u%%   up %luh%02lum",
-           (unsigned)v.batteryPct, (unsigned long)h, (unsigned long)m);
+  snprintf(line, sizeof(line), "up %luh%02lum",
+           (unsigned long)h, (unsigned long)m);
   g_oled.drawStr(0, LINE1, line);
 
   if (v.everHeard) {
