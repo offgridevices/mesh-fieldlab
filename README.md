@@ -32,7 +32,7 @@ This repository is **measurement and analysis only**. Concretely, that means:
 
 ## Intended hardware
 
-- **Nodes:** RAK WisBlock / RAK4631 running Meshtastic, US915 region
+- **Nodes:** RAK WisBlock / RAK4631 running Meshtastic, US915 region. Every node in a run is pinned to the **same** firmware version — currently `v2.7.26`, the `rak4631` build — because mixed versions produce measurements that look comparable and are not
 - **Logger:** Seeed XIAO ESP32-C6 wired to the node's UART header, writing to a microSD card. It speaks the Meshtastic client protocol over serial — the same one a phone uses — so the node needs no modified firmware.
 - **Status display:** a small OLED runs a self-test at power-up — card writable, radio answering, region and preset correct, position and clock set, which neighbours are audible — then blanks. A button wakes it for ten seconds. This is what replaces having a phone at each node.
 - **Power:** a single LiPo on the node's battery connector feeds both boards; there is no second supply and no 5 V rail. A switch in the battery lead turns the whole node on and off; each power-up starts a new log file, so cycling a node is safe.

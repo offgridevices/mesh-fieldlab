@@ -226,6 +226,8 @@ Three consequences worth knowing before the first field day:
 
 Why single-supply beats a split one: only one connector ever sees a battery, so the polarity check happens once; and if power fails, everything stops together and the log simply ends — rather than the logger dying silently while the radio keeps transmitting.
 
+The budget this was designed to, before anything was built:
+
 | Device | Average | Peak |
 |---|---|---|
 | RAK4631 + base, mostly receiving | 20–35 mA | 130 mA transmit, ~1 s bursts |
@@ -238,15 +240,25 @@ The display is the one part that is switched off in software rather than left ru
 
 The base board's 3.3 V rail is rated 750 mA, so worst case is about a third of budget.
 
-Estimated runtime on 2000 mAh, derated for real capacity, cutoff voltage and summer heat: **roughly 17 hours**, about twice an eight-hour session. **These are estimates and must be replaced with measurements.**
+**Measured on unit one, 17 August 2026** — complete node, radio and logger and card and screen, bench supply at 3.9 V, receiving real mesh traffic with the screen blanked:
+
+| | Measured |
+|---|---|
+| Idle, receiving, screen blanked | **39 mA** |
+| Transmit bursts | ~139 mA |
+| Highest seen | 169 mA |
+
+**The node draws less than half the budget it was designed to**, which changes the battery and therefore the box. Twelve hours — an eight-hour session with the 1.5× margin §12 insists on — is about 470 mAh at this draw, call it 700 mAh once derated for real capacity and cutoff voltage. **A 1000 mAh cell covers a full field day.** The 2000 mAh cell originally specified runs roughly **thirty hours**, not the seventeen estimated above; the estimate was pessimistic about average draw, not about capacity. The enclosure can be smaller than planned.
+
+**The peak figure is not yet trustworthy.** 169 mA was measured against a supply limited to 200 mA, and a limiter suppresses the very transmit burst the number is meant to capture — you cannot measure a peak your supply is clipping. The 39 mA average is sound; the peak must be taken again at a 500 mA limit. Two numbers are still owed here, both in ladder step 11: the true peak, and idle draw with the screen lit rather than blanked, so the cost of the display is a measurement instead of the estimate in the table above.
 
 ### 5.4 Safety
 
 - Battery voltage must not exceed **4.3 V** — base board absolute maximum.
 - **The RAK19003 battery connector is reverse-polarity versus the common hobby JST-PH pinout.** Confirm with a meter before every first connection. Label every battery.
 - **Adding the switch means cutting a battery lead**, which is a fresh opportunity to get that polarity wrong on a connector that is already backwards. Cut and splice one lead at a time so the two are never both open, keep the switch in the positive leg, sleeve the joint, and meter the connector again afterwards. Never cut both leads at once — a LiPo with two bare ends is a short waiting for a workbench.
-- First power-up on a **current-limited bench supply**, never a LiPo. Set 3.9 V, 200 mA limit; expect 20–60 mA. Pinned at the limit means a short; near zero means an open or reversed connection.
-- **A bench supply on `P2` is a fine substitute for the cell on the bench**, and is the better way to work up to the first field day. Stay inside the battery range — **3.8–4.0 V**, never above the 4.3 V absolute maximum, and not as low as 3.3 V or the regulator drops out under load. Raise the limit to **500 mA once the radio transmits**, because 130 mA bursts against a 200 mA limit brown the node out and read as random resets.
+- First power-up on a **current-limited bench supply**, never a LiPo. Set 3.9 V, 200 mA limit; expect 20–60 mA — a complete node measured 39 mA. Pinned at the limit means a short; near zero means an open or reversed connection.
+- **A bench supply on `P2` is a fine substitute for the cell on the bench**, and is the better way to work up to the first field day. Stay inside the battery range — **3.8–4.0 V**, never above the 4.3 V absolute maximum, and not as low as 3.3 V or the regulator drops out under load. Raise the limit to **500 mA once the radio transmits**, because 130 mA bursts against a 200 mA limit brown the node out and read as random resets. Raise it before **measuring** anything, too: a limiter clips the burst it is asked to report, so a peak read at a 200 mA setting is the limiter's number rather than the node's (§5.3).
 - **Never run USB and a bench supply at the same time.** The base board charges a cell from USB, and with a supply on `P2` the charger pushes current into a source that cannot absorb it. USB alone for flashing and configuring; supply alone for powering.
 - **Confirm `J6` reads 3.3 V with a meter before connecting anything downstream.** One probe, and it is the difference between a working node and three dead modules.
 - **Never plug USB into the logger board while it is being fed 3.3 V from the radio.** One source at a time. Charging via the radio's USB is fine.
@@ -389,6 +401,22 @@ This is **unverified** and must be tested on the bench. If it does not hold, fal
 
 Identical on all four nodes except name and position.
 
+### 8.1 The firmware version, pinned
+
+**All four radios run Meshtastic `v2.7.26` (`54e0d8d`), the `rak4631` build with the Arduino bootloader.**
+
+The version is pinned for the same reason the library and the build platform are: a run has to be able to be repeated on the same instrument. Different firmware between nodes is one of those faults that produces perfectly plausible data nobody can legitimately compare, and produces it silently — there is no error, only four sets of numbers that were never measured the same way.
+
+Do not assume the version in the box is the version you want. Unit one arrived running **2.6.11, and running a vendor variant image** (`rak4631_nomadstar_meteor_pro`) rather than the vanilla `rak4631` build. It joined the mesh, relayed traffic and looked entirely normal. Flash all four to the pinned image rather than trusting what shipped.
+
+Three things about the flashing itself:
+
+- **The UF2 must match the board.** The RAK4631 is an nRF52840; the RAK11310 is an RP2040 — a different processor on a similarly named WisBlock core, listed beside it on the same download page. A mismatched UF2 is not refused loudly. The bootloader silently declines it and **leaves the file sitting on the mass-storage volume**, which looks exactly like a drag-and-drop that did not take, and invites people to try again with the same wrong file. Check the filename says `rak4631` before copying it.
+- **If the board is labelled `RAK4631-R` it ships with RUI3**, not the Arduino bootloader, and must be converted first. The Meshtastic starter kits ship with the Arduino bootloader already.
+- **Let the node generate a fresh key.** Meshtastic advisory [GHSA-gq7v-jr8c-mfr7](https://github.com/meshtastic/firmware/security/advisories/GHSA-gq7v-jr8c-mfr7): some vendors built device images by flashing one unit, letting it generate its keys at first boot, and cloning that image across a production batch — shipping identical X25519 keypairs on whole batches of hardware. 2.6.11 onwards warns when it recognises a compromised key, and defers key generation until the LoRa region is first set. This cannot affect the measurements, because broadcast traffic on a shared channel is protected by the channel PSK rather than by per-node keys; it matters because a node holding a cloned key can be impersonated by anyone else holding the same batch image.
+
+### 8.2 The settings
+
 ```bash
 meshtastic --port <PORT> \
   --set serial.enabled true \
@@ -414,6 +442,18 @@ Notes that will cost you an afternoon if missed:
 
   The command above is set for **Rev E**. This was previously an open item to be resolved by trial; it is resolved by reading the silkscreen. Confirmed against the RAKwireless forum thread on the Rev E schematic change, Meshtastic issue #2267, and Meshtastic's own serial-module documentation, which gives 20/19 for "RAK19003 v2 variants" and 16/15 for the RAK19007.
 - Keep the modem preset identical across all nodes and all runs. Changing spreading factor mid-experiment invalidates every comparison.
+
+### 8.3 Two ways the tool reports failure on something that worked
+
+Both of these were hit while configuring unit one, and one of them produced a wrong conclusion that survived several minutes and a repeated write. `configure_node.py` has to avoid both; anybody configuring a node by hand needs to know them.
+
+**Setting a value and reading it back in the same invocation crashes the tool.** A command of the form `meshtastic --set-owner N1 --info` applies the change and then aborts *while printing the result*, with `Object of type bytes is not JSON serializable`. The exit status is non-zero and no configuration is printed, so it reads as a write that failed. It did not fail — the setting is on the radio. This is the worse of the two traps, because the natural response to an apparent failure is to run the command again. **Set and read in separate invocations, always.**
+
+**An immediate readback returns the old value.** The write is applied and echoed back asynchronously, so an `--info` run seconds later can still report the previous setting. Reading twice does not help; it returns the stale value twice, which is convincing. On unit one a rename that had worked the first time was declared broken on exactly this evidence and repeated unnecessarily.
+
+The rule that covers both: **a configuration step is not verified until a fresh, separate connection reports the new value.** Not the same command, not immediately, not the value the tool echoed as it wrote — a new connection, afterwards. Everything §12 says about reading configuration back depends on this being done properly, because a readback nobody trusts is no better than no readback at all.
+
+### 8.4 Keeping the record
 
 Save `meshtastic --info` for every node alongside the logs. Config drift between nodes is the most common invisible way to ruin a test.
 
@@ -660,6 +700,10 @@ With those corrected the capture reduces to one warning, and the analysis produc
 
 **The fixed position was the phone, not the radio.** With the iOS app's *Accurate Locations Only* setting on, every fix taken indoors — 10 to 65 m of accuracy — was rejected before it reached the radio, and the app then displayed *Fixed Position: on* regardless. The node looked configured and had no coordinate behind it, which is exactly the failure `st_pos` exists to catch. Turning the setting off produced a real coordinate on the next boot and all six checks green for the first time.
 
+**The version numbers above are the logger's, not the radio's.** They are what `LOGGER_VERSION` in `config.h` said on the day, and they are what the `fw=` key in a `BOOT` row carries. Unit one's *radio* ran the vendor variant of 2.6.11 it shipped with for the early bench work, and was flashed to the pinned `v2.7.26` `rak4631` build (§8.1) on the same day; the successful position capture and everything after it were on 2.7.26. The radio's version is not recorded in the log rows at all — it lives only in that node's `--info` dump, which is why §8.4 asks for one per node per session and why a missing dump costs more than it looks.
+
+**Measured draw, 39 mA average, is in §5.3** along with what it does to the battery and the box. The peak still needs taking again at a higher supply limit.
+
 Still unproven on one node: steps 9 onward, including every recovery path in §9.4. Nothing involving four nodes has been attempted.
 
 **The radio has to be configured before any of it means anything** — Meshtastic flashed, the Serial module enabled in `PROTO` mode at the right pins and baud, region set, fixed position written. This is what `tools/configure_node.py` is for, and it is **not written yet**; unit one was configured by hand with the §8 command. Doing it by hand once is fine for proving the link; doing it by hand four times is how three nodes end up differing from the fourth in a way nobody wrote down.
@@ -680,7 +724,7 @@ Still unproven on one node: steps 9 onward, including every recovery path in §9
     - Pull the card mid-session and put a **different** card in. A new file, again with its own `BOOT` row.
     - Unplug the radio's serial line for ten minutes and reconnect it. The screen's `R` block and its verdict must both go bad, and both must come back; a status row must carry `recov=radio`. Ten minutes because the silence window is eight — anything shorter proves nothing.
 10. Fit the switch and the button. Confirm the node survives fifty power cycles, that a press wakes the display and it blanks again, and that the button does nothing harmful if held down at power-up.
-11. Measure actual current draw and replace the estimates in §5.3. Measure it twice — display lit and display blanked — so the cost of the screen is a number rather than an assumption.
+11. Measure actual current draw and replace the estimates in §5.3. **The average is done — 39 mA** — so what remains is the peak at a **500 mA** supply limit rather than the 200 mA one that clipped it, and a second reading with the display lit, so the cost of the screen is a number rather than an assumption.
 12. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
 13. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
 14. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance, and that the switch and button are usable through the enclosure with cold hands.
@@ -729,11 +773,13 @@ Determined only with hardware in hand:
 1. ~~Whether this RAK19003 revision maps `J7` to 16/15 or 20/19~~ — **resolved by the board revision, see §8.** The boards in hand are Rev E, so 19/20
 2. Whether the CLI pushes device time on connect
 3. Whether these microSD modules need added pull-ups on this bus
-4. Real per-node current draw — §5.3 is estimated, lit and blanked
+4. ~~Real per-node current draw~~ — **average resolved: 39 mA on a complete node, §5.3.** Two parts still open: the peak, which must be re-taken at a 500 mA supply limit because 169 mA was read against a 200 mA one, and idle draw with the screen lit rather than blanked
 5. Which antenna model shipped with the radio kits, for the baseline record
 6. The OLED's I²C address — `0x3C` on most of these modules, `0x3D` on some. Scan the bus on the first unit and record it; a wrong address looks exactly like a dead screen
 7. Whether the OLED module's regulator is happy at 3.3 V — many are sold as "3.3–5 V" but a few assume 5 V and are dim or dead on a 3.3 V rail. There is no 5 V rail here
 8. Whether altitude survives the trip. `Meshtastic-arduino` narrows the protocol's 32-bit altitude to a **signed byte** in its node struct, so anything outside ±127 m is already lost before the logger sees it. Fine for the sites in mind, but it is a third field the library quietly damages, and it would need the same treatment as the other two if a taller site is ever used
+
+9. **The radio's firmware version is not recorded in the log.** `fw=` in a `BOOT` row is the logger's version; the radio's is pinned in §8.1 and captured only in the per-node `--info` dump. A session whose dump goes missing therefore cannot prove which firmware measured it. Adding a `rfw=` key to the `BOOT` row would close this — an optional key, so it costs no schema version (§6.1) — but the logger would have to learn the radio's version first, and nothing currently asks the radio for it
 
 Each is written so it is a one-line change, not a rewrite.
 
