@@ -567,15 +567,21 @@ Do not mix antenna models within a run. When comparing, **interleave A/B/A/B** r
 
 Build **one** complete node and validate it end to end before assembling the other three. A wiring error found on unit one costs an hour; found on unit four it costs four.
 
-**Confirmed on the first unit, 16 August 2026** — logger board only, radio not yet powered:
+**Confirmed on the first unit, 17 August 2026, firmware 0.4.1** — logger board only, radio not yet powered:
 
 - Firmware builds, flashes and runs on the XIAO ESP32-C6.
-- The card mounts and passes the write-and-read-back test. 939 MB free reported.
+- The card mounts and passes the write-and-read-back test. 1871 MB free reported on a 2 GB card.
 - The OLED is found on the I²C bus and shows the self-test.
 - The button wakes the running summary and the screen blanks again.
+- The boot counter survives power cycles, so each boot opens its own file.
 - With the radio absent the self-test reports it and the node **carries on into the loop rather than halting**, which is the degradation behaviour the whole design depends on.
+- With the radio absent the clock gate (§9.2) is skipped rather than waiting out its timeout, so a bench test with no radio starts immediately.
+
+**A card can pass on the logger and still be dead.** The first card mounted on the ESP32 and accepted a written row, while macOS could not mount it at all and could not read back a filesystem it had just written. The microcontroller's FAT implementation is far more forgiving than a desktop's. Prove a new card on a computer — write a large file, eject, read it back, compare — before trusting it with a session. The replacement was verified that way over 100 MB.
 
 Still unproven: everything involving the radio, which is steps 3 onward.
+
+**Before step 3, the radio has to be configured** — Meshtastic flashed, the Serial module enabled in `PROTO` mode at the right pins and baud, region set, fixed position written. This is what `tools/configure_node.py` is for, and it is **not written yet**. Doing it by hand once is fine for proving the link; doing it by hand four times is how three nodes end up differing from the fourth in a way nobody wrote down.
 
 1. Continuity and short checks with everything unpowered — 3.3 V to ground must read open.
 2. First power-up on the current-limited bench supply.
