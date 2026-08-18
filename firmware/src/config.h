@@ -11,7 +11,7 @@
 
 #define NODE_SHORT_NAME   "N1"                // Also the log filename stem
 #define ANTENNA_MODEL     "rak-stock-3dbi"    // Recorded in every file
-#define LOGGER_VERSION    "0.8.0"
+#define LOGGER_VERSION    "0.9.0"
 
 // --- timezone --------------------------------------------------------------
 // A POSIX timezone rule, not a fixed offset. The two dates on the end are the
@@ -93,10 +93,22 @@
 // How long the radio may say nothing at all before it is treated as gone.
 //
 // Must comfortably exceed NODE_REPORT_MS, because on a silent mesh the periodic
-// node report is the only thing that proves the radio is still there. One whole
-// missed report plus most of another: a single dropped reply cannot condemn a
-// working radio, and a genuinely dead one is still caught inside ten minutes.
-#define RADIO_SILENT_MS     480000UL
+// node report is the only thing that proves the radio is still there. Surviving
+// a single dropped reply means reaching the report AFTER the one that went
+// missing, so the window has to clear two whole intervals, not one.
+//
+// A dead radio is still caught quickly despite the wider window: the recovery
+// tick starts probing at the halfway mark, so silence is challenged at six
+// minutes rather than waited out to twelve.
+#define RADIO_SILENT_MS     720000UL   // 12 min = 2.4 x NODE_REPORT_MS
+
+// How often to ask the radio for a report while this node has no usable fixed
+// position. The report is how a position set from a phone reaches the node, so
+// it has to be faster than the ordinary five minutes — but a node deployed
+// without a position stays in this state all day, and at the 30 s recovery
+// interval that is ten times the normal serial traffic for a whole session,
+// every reply discarded. One minute is the compromise.
+#define POS_PROBE_MS         60000UL
 
 // A node report asked for by the recovery tick rather than by the ordinary
 // schedule is a liveness probe, not data. This is how long its replies are
@@ -124,8 +136,8 @@
 #error "Boot self-test is too long to stand and watch. Shorten the waits."
 #endif
 
-// A silence window shorter than the gap between node reports would condemn a
-// perfectly good radio on a quiet mesh, every time, forever.
-#if RADIO_SILENT_MS <= NODE_REPORT_MS
-#error "RADIO_SILENT_MS must exceed NODE_REPORT_MS or a healthy radio reads as dead."
+// A silence window shorter than two report intervals condemns a perfectly good
+// radio the first time one reply goes missing on a quiet mesh.
+#if RADIO_SILENT_MS <= (2 * NODE_REPORT_MS)
+#error "RADIO_SILENT_MS must exceed two node-report intervals or one lost reply condemns a healthy radio."
 #endif

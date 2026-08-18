@@ -76,11 +76,13 @@ void begin(const char * shortName, uint32_t bootCount,
   if (boot.clock_set)                 g_was |= B_CLOCK;
   if (boot.heard_count > 0)           g_was |= B_HEARD;
 
-  // The callbacks that ran during the boot test have already stamped this if
-  // the radio ever spoke. Only fill it in when they did not, and only when the
-  // radio did in fact answer — a node that never heard from its radio must
-  // start out knowing that, not with a fresh timestamp saying all is well.
-  if (g_lastContact == 0 && my_node_num != 0) g_lastContact = now;
+  // Start the silence clock at the end of the boot test, not from whenever the
+  // radio last happened to speak. The test can spend ten minutes waiting for a
+  // clock in complete silence — longer than RADIO_SILENT_MS — so a radio that
+  // answered perfectly well would otherwise be condemned by the very first
+  // tick. Zero stays the sentinel for a radio that never answered: my_node_num
+  // is set only by a reply, so it is the proof the link worked.
+  if (my_node_num != 0) g_lastContact = (now == 0) ? 1 : now;
 }
 
 void noteRadioContact(uint32_t now) {
@@ -136,12 +138,23 @@ Event tick(uint32_t now, SelfTest::Result & r, uint8_t heardCount) {
     g_lastProbe = now;
     ask(now, false);
   } else {
-    bool degraded = !LogFile::healthy() || !r.radio_ok || !SelfTest::positionUsable(r);
-    // A silent radio is asked hard and often — it costs nothing, nothing is
-    // arriving anyway, and the sooner it answers the sooner the node starts
-    // recording again. Everything else waits for the ordinary retry interval.
-    uint32_t askEvery = r.radio_ok ? RECOVERY_INTERVAL_MS : RADIO_ASK_EVERY_MS;
-    if (degraded && now - g_lastProbe >= askEvery) {
+    // What a probe can achieve depends on what is wrong. A card fault is not in
+    // this list at all: the card recovers on its own timer, and no amount of
+    // asking the radio moves it — the old code probed anyway, every thirty
+    // seconds, for as long as the slot stayed empty.
+    uint32_t askEvery = 0;
+    if (!r.radio_ok) {
+      // A silent radio is asked hard and often. It costs nothing, nothing is
+      // arriving anyway, and the sooner it answers the sooner the node records.
+      askEvery = RADIO_ASK_EVERY_MS;
+    } else if (now - g_lastContact >= RADIO_SILENT_MS / 2) {
+      // Quiet, but not yet condemned. A single dropped reply must not be left
+      // to sit until the next scheduled report before anyone checks again.
+      askEvery = RECOVERY_INTERVAL_MS;
+    } else if (!SelfTest::positionUsable(r)) {
+      askEvery = POS_PROBE_MS;
+    }
+    if (askEvery != 0 && now - g_lastProbe >= askEvery) {
       g_lastProbe = now;
       ask(now, true);
     }
