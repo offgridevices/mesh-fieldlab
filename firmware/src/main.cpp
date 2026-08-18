@@ -44,6 +44,15 @@ SelfTest::Result g_selfTest;
 //: file, and the boot counter is the only name available before a clock is.
 uint32_t g_bootCount = 0;
 
+//: Recoveries that happened with nowhere to write them. A position that arrives
+//: while the card is out changes what every row after it means, and the event
+//: fires exactly once — so it is held here until a file exists to take it.
+uint8_t g_pendingRecov = 0;
+
+//: Set once the radio has named us and the neighbour list has been cleaned of
+//: our own entry. After that notePeer filters us out on its own.
+bool g_selfForgotten = false;
+
 //: Per-neighbour tallies, so the neighbours page can say who and how well
 //: rather than only how many.
 uint32_t g_peer[Screen::MAX_NEIGHBOURS] = {0};
@@ -220,7 +229,10 @@ void refreshView() {
 // counted as a neighbour, because the "is this me?" test had nothing to
 // compare against yet. Drop that entry now that we know who we are.
 void forgetSelf() {
-  if (my_node_num == 0) return;
+  if (g_selfForgotten || my_node_num == 0) return;
+  // From here on notePeer has a real number to compare against, so no further
+  // self-entry can be created and this only ever needs doing once.
+  g_selfForgotten = true;
   for (uint8_t i = 0; i < g_peerCount; i++) {
     if (g_peer[i] != my_node_num) continue;
     for (uint8_t j = i; j + 1 < g_peerCount; j++) {
@@ -256,28 +268,36 @@ void serviceRecovery(uint32_t now, const Recovery::Event & ev) {
     Serial.printf("FAULT    : %s\n", Recovery::describe(ev.lost, names, sizeof(names)));
   }
 
-  if (ev.recovered == 0) return;
+  if (ev.recovered != 0) {
+    char names[48];
+    Recovery::describe(ev.recovered, names, sizeof(names));
+    Serial.printf("recovered: %s\n", names);
+  }
 
-  char names[48];
-  Recovery::describe(ev.recovered, names, sizeof(names));
-  Serial.printf("recovered: %s\n", names);
+  // Nowhere to write it yet. Hold onto what came back rather than losing it —
+  // the event happens once, and a recovery nobody recorded is a change in the
+  // measurements that the file never explains.
+  if (!LogFile::healthy()) {
+    g_pendingRecov |= ev.recovered;
+    return;
+  }
 
   // A status row rather than a row type of its own: STATUS already carries the
   // card's health and the dropped-row count, which is most of what a recovery
   // needs to say, and a new row type would mean every existing reader had to
   // learn about it. The recov= key names what came back.
   //
-  // Skipped when the file itself is new, because the BOOT row written a moment
-  // ago already marks that instant, and the ordinary status row will carry the
-  // dropped count within the minute.
-  if (!ev.newFile) {
-    g_lastStatus = now;
-    LogFile::writeStatus(ESP.getFreeHeap(), names);
-  }
+  // The card's own return is skipped on a new file, because the BOOT row
+  // written a moment ago already marks that instant. Anything that came back
+  // while there was no card is not skipped: it has never been recorded at all.
+  uint8_t toRecord = (uint8_t)((ev.newFile ? 0 : ev.recovered) | g_pendingRecov);
+  if (toRecord == 0) return;
 
-  // A late radio may have been counted as its own neighbour before it said who
-  // it was, because the "is this me?" test had nothing to compare against.
-  if (ev.recovered & Recovery::B_RADIO) forgetSelf();
+  char names[48];
+  Recovery::describe(toRecord, names, sizeof(names));
+  g_lastStatus = now;
+  LogFile::writeStatus(ESP.getFreeHeap(), names);
+  g_pendingRecov = 0;
 }
 
 // Debounced, edge-triggered. A held button must not page continuously, and a
@@ -422,6 +442,12 @@ void loop() {
   if (LogFile::adoptClockName(NODE_SHORT_NAME)) {
     Serial.printf("clock    : time acquired — file is now %s\n", LogFile::fileName());
   }
+
+  // The moment the radio names us, drop ourselves from the neighbour list. Not
+  // tied to a radio recovery event: on the ordinary boot the radio answers
+  // during the self-test, so no recovery ever fires and the stale self-entry
+  // would sit in the count for the whole session.
+  forgetSelf();
 
   // Everything that can break and then stop being broken: the card, the radio,
   // the position, the clock, the neighbours. Owns the node-report schedule too,

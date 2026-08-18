@@ -29,6 +29,20 @@ void rememberHeard(uint32_t node) {
   if (g_heardCount < MAX_NEIGHBOURS) g_heard[g_heardCount++] = node;
 }
 
+// The radio had not yet said who we are when the earliest packets arrived, so
+// the filter above had nothing to compare against and this node's own
+// transmissions were counted as a neighbour. Drop that entry once the number
+// is known, before the count reaches the BOOT row where nobody can correct it.
+void forgetSelfHeard() {
+  if (my_node_num == 0) return;
+  for (uint8_t i = 0; i < g_heardCount; i++) {
+    if (g_heard[i] != my_node_num) continue;
+    for (uint8_t j = i; j + 1 < g_heardCount; j++) g_heard[j] = g_heard[j + 1];
+    g_heardCount--;
+    return;
+  }
+}
+
 // The console mirrors the screen. Both are best-effort and neither is
 // required: a node with no display and no USB still logs correctly.
 void say(const char * fmt, ...) {
@@ -288,6 +302,7 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
     }
   }
 
+  forgetSelfHeard();
   r.heard_count = g_heardCount;
   r.clock_set   = Clock::valid();
   r.battery_pct = g_battery;

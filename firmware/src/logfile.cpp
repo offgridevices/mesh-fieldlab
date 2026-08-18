@@ -154,6 +154,13 @@ bool open(const char * shortName, uint32_t bootCount) {
   g_file.print('\n');
   g_file.flush();
   g_lastFlush = millis();
+
+  // A new file counts its own rows. The dropped-row count is deliberately left
+  // cumulative — it measures what the session lost, which spans files — but
+  // rows= is read against the file it appears in, and a count carried over from
+  // a card no longer in the slot cannot be reconciled with anything.
+  g_rows = 0;
+  g_sinceFlush = 0;
   return true;
 }
 
