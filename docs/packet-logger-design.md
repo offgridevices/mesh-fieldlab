@@ -459,6 +459,46 @@ Save `meshtastic --info` for every node alongside the logs. Config drift between
 
 **Redact it first.** `--info` prints the node's PKI **private key** in its `security` block, and its fixed position with it. A private key in a public repository lets anyone impersonate that node on the mesh, and publishing one cannot be undone — a rotation on every affected node is the only remedy. Strip the `security` block and commit the result as `config/<node>.redacted.json`; `.gitignore` is set so the raw dump cannot be added by accident. This is what `configure_node.py` will write, so the redaction is not left to whoever is holding the laptop that day.
 
+### 8.5 Keeping a test mesh to itself
+
+A controlled test of a fixed set of nodes — two endpoints too far apart to reach each other, two more placed between them to bridge the gap — only measures what it claims to if the set is actually closed. Every node outside the set that joins in is a change to the topology, made by somebody else, that the data records only ambiguously.
+
+**A private channel does not close the set.** This is the trap, and it is worth stating plainly because the setting is named in a way that invites the opposite conclusion. Meshtastic separates the *radio mesh* — everyone sharing a frequency, bandwidth and spreading factor — from *channels*, which are a name and an encryption key layered on top. The channel decides who can **read** a packet. It does not decide who **hears** it, and it does not decide who **relays** it. From the project's own documentation: nodes *"rebroadcast all packets if they share LoRa modem settings, irrespective of encryption"*, and *"all nodes in the radio mesh receive messages."*
+
+So a fresh 256-bit key buys payload privacy and nothing else. Strangers still hear every packet, still rebroadcast them, and still appear in this logger's files — correctly, because their signal readings are real measurements. For a controlled run the relaying is the damaging part: a stranger carrying one of your packets extends your topology by a node you did not place, cannot locate, and may not see again.
+
+**What closes the set is the frequency slot.** Two nodes on different slots are on different frequencies and cannot hear each other at all. The relevant firmware arithmetic, for the US region at a 250 kHz bandwidth:
+
+```
+numChannels = floor((freqEnd - freqStart) / (spacing + bandwidth))
+            = floor((928.0 - 902.0) / 0.25)                 = 104 slots
+
+freq        = freqStart + bandwidth/2 + (slot - 1) x bandwidth
+            = 902.125 MHz + 0.25 x (slot - 1)
+```
+
+`lora.channel_num` selects the slot, numbered 1 to 104, and is the setting that matters. Left at its default of `0` the radio falls back to hashing the **primary channel's name** to pick a slot — which is why changing a channel name silently moves a node to a different frequency, and why two nodes with different channel names may not reach each other however carefully their keys match. Set the slot explicitly and the name becomes cosmetic.
+
+The public default, `LongFast`, hashes to **slot 20 — 906.875 MHz**, and that is where essentially all local traffic sits. Any slot well away from it is a candidate; the arithmetic above converts a slot number to the frequency it will actually transmit on, which is the number to check against local band use before committing to it.
+
+**Settings, in addition to §8.2, applied identically to every node in the set:**
+
+| Setting | Value | What it does |
+|---|---|---|
+| `lora.channel_num` | a chosen slot, **not** 0 | Puts the set on its own frequency. This is the one that provides isolation |
+| primary channel PSK | `random`, then shared to the others | Payload privacy. Does **not** isolate — set it because there is no reason not to, not because it does the job above |
+| primary channel name | anything, matched across the set | Cosmetic once the slot is explicit, but keep it consistent so nobody is misled |
+| `device.rebroadcast_mode` | `LOCAL_ONLY` | Stops **our** nodes carrying foreign traffic. It cannot stop foreign nodes carrying ours — only the slot does that |
+| `lora.hop_limit` | `3` | Permits up to three relays. A two-relay bridge needs two, so this leaves one spare. Identical everywhere, or hop counts are not comparable |
+
+`lora.ignore_incoming` looks like it belongs on this list and does not: it is a blocklist of specific node numbers, capped at three entries, and deprecated in the client apps. It cannot express "everyone except these four."
+
+**Proving a slot is empty is a job for this logger.** Set one node to the candidate slot, leave it running for half an hour, and read the card. A file containing nothing but this node's own status rows is the evidence that the slot is clear; any foreign node in it means picking another. This is a better test than reasoning about which slots ought to be busy, and it costs one session.
+
+**Two consequences to expect, neither of them faults.** A node brought up alone on a private slot will report `ALONE` at the end of its self-test until a second node transmits, because there is genuinely nothing else there. And the boot clock wait has no mesh to take a time from, so bring the set up together, or hand a time to one node from a phone and let it propagate.
+
+**Interference is a separate experiment, not a contaminant in this one.** Measuring how the set behaves amid uncontrolled traffic is a real question and a different one. It is answered by re-running the same physical layout on the public slot and comparing against the isolated baseline — which requires the baseline to exist first, and to be clean. Uncontrolled traffic mixed into the controlled run yields neither number.
+
 ## 9. Firmware behaviour
 
 ```
@@ -739,6 +779,8 @@ Still unproven on one node: steps 9 onward, including every recovery path in §9
 10. Fit the switch and the button. Confirm the node survives fifty power cycles, that a press wakes the display and it blanks again, and that the button does nothing harmful if held down at power-up.
 11. Measure actual current draw and replace the estimates in §5.3. **The average is done — 39 mA** — so what remains is the peak at a **500 mA** supply limit rather than the 200 mA one that clipped it, and a second reading with the display lit, so the cost of the screen is a number rather than an assumption.
 12. Four nodes on a desk for two hours, antennas attached, real traffic intervals. Confirm every node saw every other and counts are roughly symmetric — `validate-csv --min-packets 100` answers both, and must report no errors.
+
+    Do the **frequency-slot survey first** (§8.5), because it decides what the rest of the runs are measured on: one node on the candidate slot, half an hour, then read the card. Foreign nodes in that file mean the slot is occupied and another must be chosen. Only once a slot is proven clear are all four moved onto it, and from that point every node in the set carries identical `lora.channel_num`, `device.rebroadcast_mode` and `lora.hop_limit` — verified by a fresh `--info` connection per §8.3, not by the value the write echoed back.
 13. One node on battery until it dies. **Multiply the planned session by 1.5 and confirm the battery beats it.**
 14. Sealed enclosure, 300 m walk and back. Confirm sensible signal roll-off with distance, and that the switch and button are usable through the enclosure with cold hands.
 
