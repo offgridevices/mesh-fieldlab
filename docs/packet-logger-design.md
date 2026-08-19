@@ -264,6 +264,102 @@ The base board's 3.3 V rail is rated 750 mA, so worst case is about a third of b
 - **Never plug USB into the logger board while it is being fed 3.3 V from the radio.** One source at a time. Charging via the radio's USB is fine.
 - **Never power the radio with no antenna attached.** Transmit power reflects into the amplifier, and the measurement is invalid anyway.
 
+### 5.5 Mounting
+
+**The binding dimension is 30 mm.** The base board is 30 mm wide. On a 50 mm-wide proto board that leaves room for exactly one more module beside it, and only if that module is the narrow one. That single fact chooses the board, its orientation, and therefore every opening in the enclosure.
+
+Of the proto board sizes to hand, **7 × 5 cm turned landscape is the smallest that works**:
+
+| Board | Verdict | Why |
+|---|---|---|
+| **7 × 5 cm** | **Use this** | Radio and logger sit side by side along the 70 mm edge with 22 mm to spare, and the card still has a clear 20 × 18 mm below. About half the board ends up unused, which is what makes it solderable rather than a fight |
+| 6 × 4 cm | Possible | Everything lands, with roughly 1 mm to spare under the card module and nowhere at all for the decoupling parts. Saves 10 mm of box length |
+| 7 × 3 cm | No | The board is exactly as wide as the radio. No margin, and the logger and card have nowhere to go but on top of each other |
+| 8 × 2 cm | No | Narrower than the radio |
+| 9 × 7 cm | Wasteful | Fits easily, and costs 20 mm of box length for nothing |
+
+Layout, on the 2.54 mm grid, seen from the component side:
+
+```
+                              70 mm
+    +----------------------------------------------------+
+    |    [USB-C]                          [USB-C]        |  <- port wall
+    |   +-----------------+  :  :      +-------------+   |
+    |   |    RAK19003     |  :  :      |    XIAO     |   |
+    |   |   + RAK4631     |  :  :      |  ESP32-C6   |   |
+    |   |     30 x 35     |  :  :      |  21 x 17.8  |   |
+    |   |  J6         J7  |  :  :      +-------------+   |  50 mm
+    |   +-----------------+  :  :                        |
+    |  = = = = = = = = = = = : =: = = = = = = = = = = =  |  3V3 rail  \ solder
+    |  = = = = = = = = = = = : =: = = = = = = = = = = =  |  GND rail  / side
+    |                        :  :      +-------------+   |
+    |   [ 6-way lead pads ]  :  :      |   microSD   |   |
+    |                        :  :      |   20 x 18   |   |
+    |                        :  :      +----[====]---+   |
+    +----------------------------------------------------+
+                          13 mm channel      ^ card slot
+```
+
+- **Both USB-C ports face the same wall.** This is the only arrangement that achieves it on a 50 mm-wide board, and it is worth the effort: the enclosure then needs one bench face and one field face rather than openings scattered around it.
+- **The card sits directly under the logger**, which keeps its bus 20 mm long. It is the only fast bus on the board and the only one worth optimising; everything else is slow enough not to care.
+- **Power and ground run on the solder side**, as two bare wire rails across the middle of the board. Every module drops through to them rather than routing around them, which is what keeps the component side almost free of crossings. The rails pass under the radio, using space that is dead anyway.
+- **A 13 mm channel** between the radio and the logger carries the serial pair, the screen pair and the button. It is the only part of the board with nothing above it, which later decides where two of the lid components can sit (§5.6).
+- **Only four things are on the board**: radio, logger, card module and the decoupling parts. The screen, the button, the switch and the antenna are all panel-mounted and reach the board on flying leads.
+- **The screen and button leave as one 6-way connector.** With the antenna lead unplugged that is two disconnects between a closed box and a bare board, which is what makes the lid removable rather than merely detachable.
+
+Module footprints, from the manufacturers' own drawings:
+
+| Part | Footprint | Mounting |
+|---|---|---|
+| RAK19003 + RAK4631 | 30 × 35 mm | Two 4-pin 2.54 mm headers, `J6` and `J7`, both on one edge |
+| Seeed XIAO ESP32-C6 | 21 × 17.8 mm | 2 × 7 pins, rows 0.6 in apart, both on the 0.1 in grid |
+| 3.3 V microSD breakout | ≈ 20 × 18 mm | 1 × 6 pins on the edge opposite the card slot |
+| 0.91 in OLED, 128 × 32 | 38 × 12 mm, active area 22.4 × 5.6 mm | 4 pins; panel-mounted, not on the board |
+
+**Two numbers to take off the real parts before committing to anything.**
+
+- **The distance between `J6` and `J7`.** If it is a whole number of holes the radio drops straight into the board. If it is not, the radio still sits where the layout puts it but goes down on standoffs with five short wires instead of two header strips. The layout does not change either way; the assembly method does.
+- **The height of the assembled radio stack.** It is the tallest thing in the node and therefore the only thing that sets the lid. Measure from the board face to the top of the antenna connector once the core is seated.
+
+### 5.6 The enclosure
+
+Sized off the layout above, with 3 mm of clearance around the board and the cell underneath it:
+
+| | |
+|---|---|
+| Internal cavity | 76 × 56 × 32 mm |
+| Box, closed | 80 × 60 × 37 mm — walls 2, floor and lid 2.5 |
+| Standing on its feet | 41 mm to the top of the lid |
+| With the antenna on | ≈ 140 mm overall |
+
+**Each face does one job.** Ports on one long wall, card on the other, switch on a short wall, and the three things you look at or touch in the field on the lid. **The floor has no opening of any kind**, which is what makes the node safe to stand on damp ground.
+
+| Face | Carries | Opening |
+|---|---|---|
+| Long wall A | Both USB-C ports | Two wells 14 × 8 mm, centres 38 mm apart, 23.3 mm above the floor |
+| Long wall B | microSD card | Slot 18 × 8 mm with a finger scallop below it |
+| Short wall A | Power switch | Pocket 22 × 14 mm recessed 3 mm; slot sized to the switch |
+| Short wall B | — | Nothing. Leave it solid |
+| Lid | Screen, button, antenna | Window 26 × 9 mm, hole Ø12 mm, hole Ø6.5 mm |
+| Floor | Feet | None |
+
+**Two lid positions are forced rather than chosen**, and both by what is underneath them:
+
+- **The antenna cannot go over the radio.** There is about 4 mm of air above the radio stack and a bulkhead connector needs roughly 15 mm behind the panel. It goes over the flying-lead area instead, which has the full cavity height above it.
+- **The button cannot go under the screen.** A panel button is about 10 mm deep and the gap above the card module is 10.4. It goes over the 13 mm channel, which is the only part of the lid with real room behind it.
+
+**Water.** The lid overlaps the body so rain runs down the outside rather than into the seam, a small ledge above each port well sheds water off it, the feet lift every seam clear of standing water, and the floor is unbroken. Two printed bungs close the port wells when no cable is in them. This is **damp grass proof, not rain proof** — it is a field prototype, not an IP-rated box.
+
+**Standing it up.** The node is meant to be **set down on the ground with the antenna vertical**. The log sheet wants height above ground recorded (§7); on the ground that number is about 40 mm, which is as valid an entry as any other. What the measurement actually depends on is that **the answer is identical on all four nodes**, since the comparison is between links within the set. The one thing to avoid is grass taller than the box, which puts the antenna inside the vegetation rather than above it and varies between sessions for no reason anybody records.
+
+A **¼-20 threaded insert** in the floor is optional, and only worth fitting if ground level ever proves too noisy to work with. It has one consequence worth knowing before printing: the cell lies flat on the inside of the floor and covers nearly all of it, so the boss that holds the insert has to hang **below** the floor rather than rise inside it, and the feet must then grow from 4 mm to 7 so the box stands on its feet rather than on the insert. That costs 3 mm of box height. The hole is blind, stopping 2 mm short of breaking through, so the floor stays as sealed as it was.
+
+**Printing.**
+
+- **Print the body upside down**, floor upward. The floor is the face that has to stay watertight, and printing it as a top surface rather than as the first layer is the difference between a sealed floor and a floor with a seam in it. Supports are needed only inside the switch pocket.
+- **Cut the openings last.** All three wall openings are positioned off the board stack, and the stack height depends on how the modules are mounted — plain headers put the ports at 23.3 mm above the floor, short wire links on 3 mm standoffs put them nearer 15, and in the second case the two ports no longer sit at the same height as each other. Build the board, measure where the three openings actually land, then commit the walls. Modelling the port wall as a **separate 80 × 34.5 mm plate that screws into a rebate** makes a wrong guess cost one small part rather than the whole box.
+- **The headers set the box height, not the parts.** 8.5 mm of the 32 mm cavity is pin-header plastic. Direct wire links on 3 mm standoffs bring the cavity to about 26 mm and the closed box to 31, at the cost of a radio that no longer unplugs.
+
 ## 6. File format
 
 One file per node per power cycle: `/LOG_<SHORTNAME>_<YYYYMMDD>_<HHMM>.csv`
@@ -835,6 +931,10 @@ Determined only with hardware in hand:
 8. Whether altitude survives the trip. `Meshtastic-arduino` narrows the protocol's 32-bit altitude to a **signed byte** in its node struct, so anything outside ±127 m is already lost before the logger sees it. Fine for the sites in mind, but it is a third field the library quietly damages, and it would need the same treatment as the other two if a taller site is ever used
 
 9. **The radio's firmware version is not recorded in the log.** `fw=` in a `BOOT` row is the logger's version; the radio's is pinned in §8.1 and captured only in the per-node `--info` dump. A session whose dump goes missing therefore cannot prove which firmware measured it. Adding a `rfw=` key to the `BOOT` row would close this — an optional key, so it costs no schema version (§6.1) — but the logger would have to learn the radio's version first, and nothing currently asks the radio for it
+
+10. **Whether the radio's two headers land on the 2.54 mm grid.** `J6` and `J7` are both 2.54 mm pitch, but the distance between them decides whether the base board drops straight into a proto board or sits on standoffs with five short wires instead (§5.5). It changes the assembly method, not the layout
+11. **The assembled height of the radio stack.** It is the tallest thing in the node and the only thing that sets the lid, so the enclosure height in §5.6 stays provisional until it is measured on a seated core
+12. **The cell's actual dimensions.** §5.6 assumes roughly 50 × 34 × 6 mm. A thicker cell of the same footprint costs box height and nothing else
 
 Each is written so it is a one-line change, not a rewrite.
 
