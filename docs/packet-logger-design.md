@@ -652,7 +652,16 @@ Non-negotiable for unattended use:
 - **On card failure, keep running.** Keep counting, signal on the LED, retry the mount. Do not halt — a node that stops logging is worse than one that logs a gap.
 - **Nothing the self-test can do may be a one-time-only ability.** Every check it makes has to be re-makeable while the node runs (§9.4).
 
-Power management: WiFi off, Bluetooth off, CPU at 80 MHz. **No deep sleep** — the logger must continuously service the serial stream.
+Power management: CPU at 80 MHz, both 2.4 GHz radios out of the picture. **No deep sleep** — the logger must continuously service the serial stream.
+
+**The 2.4 GHz radios are absent, not idle.** The logger reaches the mesh radio over a serial pair and the card over SPI; WiFi and BLE take no part in any of it, and the module’s own ceramic antenna is left doing nothing. Neither was ever started — but "off because nothing asked" is a property of today’s code rather than a guarantee, and the first symptom of a library quietly bringing one up would be a current draw that no longer matches the battery arithmetic. The two are therefore held off in different ways, for a measured reason:
+
+| | How it is kept off | Cost |
+|---|---|---|
+| **BLE** | `esp_bt_mem_release()` at boot, which is irreversible for the rest of the boot — nothing can start BLE afterwards | 6 bytes of flash |
+| **WiFi** | Not touched in code at all. `check_radios.py` runs after every build and fails it if a WiFi or BLE entry point is linked into the image | none |
+
+The asymmetry is deliberate. WiFi has no one-way release, and the only way to ask it to stop is to call into the WiFi stack — which links the whole stack in. Measured on this firmware, `esp_wifi_stop()` plus `esp_wifi_deinit()` cost **133 KB of flash and 16 KB of RAM** to switch off something that was never on, putting the entire radio stack inside the image in order to announce that the radio is unused. Checking the finished binary instead costs nothing and is the stronger claim: a radio whose start function is not present cannot be started. The check is proven by injecting a real `esp_wifi_stop()` call and confirming the build fails.
 
 Per-node settings live in `firmware/src/config.h`: short name, pins, baud, flush thresholds, timings. It is the only file that differs between the four units — change the name, flash, label the box.
 

@@ -10,6 +10,8 @@
 #include <Arduino.h>
 #include <Meshtastic.h>
 
+#include "esp_bt.h"
+
 #include "clock.h"
 #include "config.h"
 #include "log_schema.h"
@@ -363,8 +365,38 @@ void setup() {
   // Before anything asks for a local time. Costs nothing and cannot fail.
   Clock::begin();
 
-  // Radios off, clock down. The logger has nothing to transmit and must stay
-  // awake for the serial stream, so this is all the power saving there is.
+  // --- radios off ----------------------------------------------------------
+  // Nothing in this node uses the 2.4 GHz radio. It reaches the mesh radio
+  // over a serial pair and the card over SPI; WiFi and BLE have no part in
+  // any of it, and the module's own ceramic antenna is left doing nothing.
+  //
+  // Both are already off, because nothing here ever starts them — but "off
+  // because nobody asked" is a property of today's code, not a guarantee. A
+  // library added later could bring one up unnoticed, and the first symptom
+  // would be a current draw that no longer matches the battery arithmetic
+  // the session length rests on.
+  //
+  // BLE is therefore shut off here and for good. Releasing the controller's
+  // memory cannot be undone for the rest of the boot, so nothing can start
+  // BLE afterwards however politely it asks. Measured cost of saying so: six
+  // bytes of flash.
+  esp_bt_mem_release(ESP_BT_MODE_BTDM);
+
+  // WiFi is deliberately NOT switched off in code, and that is not an
+  // oversight. It has no equivalent one-way release, and the only way to ask
+  // is to call into the WiFi stack — which links the whole thing in. Measured
+  // on this firmware: esp_wifi_stop() plus esp_wifi_deinit() cost 133 KB of
+  // flash and 16 KB of RAM, to switch off something that was never on. That
+  // puts the entire radio stack inside the image in order to announce that we
+  // are not using the radio, which is worse than saying nothing.
+  //
+  // The guarantee is made where it is free instead: check_radios.py runs after
+  // every build and fails it if a WiFi or BLE entry point has found its way
+  // into the image. Off because it cannot be reached, rather than off because
+  // it was asked nicely at boot.
+
+  // Clock down. The logger must stay awake for the serial stream, so with the
+  // radios gone this is the last power saving left.
   setCpuFrequencyMhz(80);
 
   bool displayOk = Screen::begin();
