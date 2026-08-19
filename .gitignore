@@ -294,5 +294,22 @@ data/raw/
 config/
 !config/*.redacted.json
 
+# ---------------------------------------------------------------------------
+# Cached radio firmware images.
+#
+# The pinned Meshtastic build (§8.1) is kept in firmware/radio/ so a node can
+# be flashed without going back to the download page and picking from a list
+# of similarly named files. It is cached, not committed: these are large
+# binaries that belong to the Meshtastic project, they are reproducible from
+# a version tag, and a binary in git is a binary nobody can review.
+#
+# firmware/radio/README.md records which image belongs there and how to get
+# it back, which is the part actually worth version control.
+# ---------------------------------------------------------------------------
+firmware/radio/*.uf2
+firmware/radio/*.zip
+firmware/radio/*.hex
+firmware/radio/*.bin
+
 # macOS Finder litter. Turns up in any directory the Finder has opened.
 .DS_Store
