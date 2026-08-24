@@ -26,6 +26,18 @@ the artwork to suit them. Both are done.
 | **Bone** `#F1ECE0` | Silkscreen | **White** |
 | **Ember** `#FF6A00` | The Beacon Ring, in bare metal | **ENIG** surface finish |
 
+### The lockup
+
+The mark and wordmark are placed at the ratios in
+`handoff/logo/svg/offgrid-wordmark-horizontal.svg` — mark at `translate(20 12)`,
+text anchored at `x=240 y=125`, size 92, letter-spacing −3 — scaled as one unit
+so the spacing is the brand's, not an approximation. The wordmark is set in
+**real Archivo weight 900 outlines**, pulled from the variable font and emitted
+as filled polygons, rather than a stand-in stroke font. `src/verify_wordmark.py`
+re-renders the same text through FreeType and compares shapes as a build gate.
+
+Mark height 5.4 mm, lockup 21 mm wide, cap height 2.3 mm.
+
 No board house offers orange soldermask, so Ember is expressed the only way a
 PCB can: as **exposed copper**. The Beacon Ring is drawn on the copper layer
 with a matching opening in the soldermask, so it comes out as bare gold metal
@@ -226,6 +238,7 @@ Two independent sets of checks, plus KiCad's own:
 | Brand accent is on copper + mask, never silkscreen (regression gate) | **pass** — 37 items on each |
 | Silkscreen over mounting holes | **pass** — none |
 | Every region inspected visually at readable magnification, both sides | **done** |
+| Wordmark outlines vs an independent FreeType rendering | **match** — IoU 0.94, aspect within 0.6% |
 
 The strongest of these is the cross-check: KiCad was asked to export its own
 Gerbers from the same board, and its top copper and board outline match ours

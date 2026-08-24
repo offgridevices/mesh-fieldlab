@@ -47,6 +47,9 @@ def dashrect(x1,y1,x2,y2,w=0.12,dash=1.2,layer='silk'):
 def disc(x,y,r,layer='silk'):
     silk.append(('disc',x,y,r,layer))
 
+def poly(pts,layer='silk'):
+    silk.append(('poly',tuple(pts),layer))
+
 def text(x,y,s,size=1.0,just='center',angle=0,layer='silk',thick=None):
     s = s.upper()
     silk.append(('text',x,y,s,size,just,angle,layer,thick if thick else max(0.12,size*0.15)))
@@ -231,25 +234,35 @@ cap('C4',48.0,53.0,'100n')
 text(39.5, 34.2, 'C1-C4 OPTIONAL', 0.8, just='left')
 
 # ================================================================= branding
-def offgrid_mark(cx, cy, height=7.0, w=None):
-    """OffGrid 'beacon ring': 310 deg arc with the gap at the top, plus a dot.
-    Traced directly from public/brand/offgrid-mark.svg (viewBox 0 0 200 200,
-    arc r=58 stroke=22 about (100,107.97); dot r=17 at (100,40))."""
+def offgrid_mark(cx, cy, height):
+    """OffGrid 'beacon ring': 310 deg arc with the gap at the top, plus a node.
+    Traced from handoff/logo/svg/offgrid-mark.svg (viewBox 0 0 200 200,
+    arc r=58 stroke=22 about (100,107.97); node r=17 at (100,40)).
+    cx,cy is the centre of the mark's BOUNDING BOX, height its full height."""
     s = height/153.97
     sw = 22*s
     R  = 58*s
-    ringy = cy - 7.985*s                     # centre the whole mark on cy
-    N=36                                     # segments long enough to survive
-    pts=[]                                   # the silkscreen fragment filter
+    ringy = cy - 7.985*s
+    N = 36                                   # segments long enough to survive
+    pts = []                                 # the silkscreen fragment filter
     for k in range(N+1):
         th = math.radians(-65.0 + 310.0*k/N)
         pts.append((cx + R*math.cos(th), ringy - R*math.sin(th)))
     acc_polyline(pts, sw)                    # <- exposed copper, not silkscreen
     acc_disc(cx, ringy + 67.97*s, 17*s)
-    return sw
 
-offgrid_mark(68.5, 6.7, 7.0)
-text(76.3, 6.7, 'OFFGRID', 1.1, just='left')   # wordmark stays Bone / white silk
+# ---- the lockup, at the brand file's own proportions -----------------
+#  handoff/logo/svg/offgrid-wordmark-horizontal.svg:
+#     mark translate(20 12), text x=240 y=125 Archivo 900 size 92 tracking -3
+#  Mark stays the single Ember accent (exposed copper); the wordmark is Bone,
+#  set in real Archivo 900 outlines rather than a stand-in stroke font.
+import wordmark as _wm
+LOGO_CX, LOGO_CY, LOGO_H = 66.0, 6.9, 5.4
+offgrid_mark(LOGO_CX, LOGO_CY, LOGO_H)
+_s, _tp, _wl = _wm.lockup(LOGO_CX, LOGO_CY, LOGO_H)
+for _p in _tp:
+    poly(_p)
+LOGO_LOCKUP_W = _wl * _s
 # clear space: brand asks for 1x node radius around the mark; the router is
 # told to keep all copper out of this box so the metal reads clean.
 LOGO_KEEPOUT = accent_bbox(0.9)

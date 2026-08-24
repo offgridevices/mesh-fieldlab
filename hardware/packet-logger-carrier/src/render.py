@@ -80,7 +80,9 @@ def render(out='board.png', show_tracks=True, silkonly=False):
                    outline=(230,230,120), width=2)
     # silk
     for it in D.silk:
-        if it[0]=='disc':
+        if it[0]=='poly':
+            dr.polygon([(X(a),Y(b)) for (a,b) in it[1]], fill=(241,236,224,235))
+        elif it[0]=='disc':
             _dx,_dy,_rr = it[1],it[2],it[3]*S
             dr.ellipse([X(_dx)-_rr,Y(_dy)-_rr,X(_dx)+_rr,Y(_dy)+_rr],
                        fill=(238,238,232,225))

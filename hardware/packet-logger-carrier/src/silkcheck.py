@@ -23,8 +23,13 @@ def ov(a,b):
     iy = min(a[3],b[3])-max(a[1],b[1])
     return (ix,iy) if (ix>0 and iy>0) else None
 
+def polybox(it, m=0.0):
+    xs=[p[0] for p in it[1]]; ys=[p[1] for p in it[1]]
+    return (min(xs)-m, min(ys)-m, max(xs)+m, max(ys)+m)
+
 def run(verbose=True):
     texts=[it for it in D.silk if it[0]=='text']
+    polys=[it for it in D.silk if it[0]=='poly']
     hits=[]
     for i in range(len(texts)):
         for j in range(i+1,len(texts)):
@@ -54,6 +59,39 @@ def run(verbose=True):
             if o and o[0]>0.12 and o[1]>0.12:
                 hits.append(('TEXT/LINE','%r'%t[3],'seg %.1f,%.1f-%.1f,%.1f'%(x1,y1,x2,y2),
                              round(o[0],2),round(o[1],2)))
+    for pg in polys:
+        pb=polybox(pg)
+        for p in D.pads:
+            o=ov(pb, pbox(p))
+            if o and o[0]>0.05 and o[1]>0.05:
+                hits.append(('POLY/PAD','wordmark','%s.%s'%(p['ref'],p['pin']),
+                             round(o[0],2),round(o[1],2)))
+        for (hx,hy,hd) in D.holes:
+            o=ov(pb,(hx-hd/2-0.2,hy-hd/2-0.2,hx+hd/2+0.2,hy+hd/2+0.2))
+            if o and o[0]>0.05 and o[1]>0.05:
+                hits.append(('POLY/HOLE','wordmark','MH @%.1f,%.1f'%(hx,hy),
+                             round(o[0],2),round(o[1],2)))
+        for t in texts:
+            o=ov(pb, tbox(t))
+            if o and o[0]>0.1 and o[1]>0.1:
+                hits.append(('POLY/TEXT','wordmark','%r'%t[3],round(o[0],2),round(o[1],2)))
+        for ln in [i for i in D.silk if i[0]=='line']:
+            _,x1,y1,x2,y2,w,lay = ln
+            o=ov(pb,(min(x1,x2)-w/2,min(y1,y2)-w/2,max(x1,x2)+w/2,max(y1,y2)+w/2))
+            if o and o[0]>0.1 and o[1]>0.1:
+                hits.append(('POLY/LINE','wordmark','seg %.1f,%.1f'%(x1,y1),
+                             round(o[0],2),round(o[1],2)))
+        for it in D.accent:
+            if it[0]=='line':
+                _,ax,ay,bx,by,aw,_l = it
+                ab=(min(ax,bx)-aw/2,min(ay,by)-aw/2,max(ax,bx)+aw/2,max(ay,by)+aw/2)
+            else:
+                _,ax,ay,ar,_l = it; ab=(ax-ar,ay-ar,ax+ar,ay+ar)
+            o=ov(pb,ab)
+            if o and o[0]>0.05 and o[1]>0.05:
+                hits.append(('POLY/ACCENT','wordmark','mark',round(o[0],2),round(o[1],2)))
+        if pb[0]<0.5 or pb[1]<0.5 or pb[2]>D.BW-0.5 or pb[3]>D.BH-0.5:
+            hits.append(('POLY OFF-BOARD','wordmark','',round(pb[0],1),round(pb[2],1)))
     # text sitting on a mounting hole (fab would clip it; screw head covers it)
     for t in texts:
         tb=tbox(t)

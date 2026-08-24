@@ -33,6 +33,7 @@ def main():
     step('DRC',          lambda: sh(['drc.py']))
     step('NETLIST',      lambda: sh(['netcheck.py']))
     step('SILKSCREEN',   lambda: sh(['silkcheck.py']))
+    step('WORDMARK',     lambda: sh(['verify_wordmark.py']))
     step('KICAD',        lambda: sh(['emit_kicad.py']))
     step('LAYER CHECK',  check_layers)
     step('GERBER',       lambda: sh(['emit_gerber.py']))

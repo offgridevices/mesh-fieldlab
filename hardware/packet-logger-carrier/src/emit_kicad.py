@@ -104,7 +104,11 @@ def write(path):
 
     # ---------------- silkscreen
     for it in D.silk:
-        if it[0]=='disc':
+        if it[0]=='poly':
+            pts=' '.join('(xy %s %s)'%(KX(a),KY(b)) for (a,b) in it[1])
+            o.append('  (gr_poly (pts %s) (stroke (width 0) (type solid)) '
+                     '(fill solid) (layer "F.SilkS") (uuid "%s"))'%(pts,U()))
+        elif it[0]=='disc':
             _,dx,dy,dr,_l = it
             o.append('  (gr_circle (center %s %s) (end %s %s) '
                      '(stroke (width 0.05) (type solid)) (fill solid) '

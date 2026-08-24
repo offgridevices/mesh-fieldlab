@@ -108,6 +108,8 @@ def emit(outdir):
         if it[0]=='disc':
             _,dx,dy,dr,_l = it
             g.flash(('C', round(2*dr,4)), dx, dy)
+        elif it[0]=='poly':
+            g.region(list(it[1]))
         elif it[0]=='line':
             _,x1,y1,x2,y2,w,lay=it
             g.draw(('C',w),x1,y1,x2,y2)
