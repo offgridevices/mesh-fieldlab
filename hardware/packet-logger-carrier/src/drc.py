@@ -5,7 +5,7 @@ import pickle, math, sys
 import numpy as np
 import design as D
 
-MIN_CLR   = 0.25     # match the declared net-class clearance
+MIN_CLR   = 0.30     # match the declared net-class clearance
 MIN_TRACE = 0.15
 MIN_ANN   = 0.15     # annular ring
 MIN_H2H   = 0.45     # hole edge to hole edge

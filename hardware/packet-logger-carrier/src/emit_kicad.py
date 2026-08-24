@@ -221,14 +221,14 @@ def write_library(outdir):
 
 def write_pro(path):
     pro={"board":{"design_settings":{"defaults":{},
-          "rules":{"min_clearance":0.2,"min_track_width":0.15,
+          "rules":{"min_clearance":0.25,"min_track_width":0.15,
                    "min_through_hole_diameter":0.3,"min_hole_to_hole":0.45,
                    "min_via_annular_width":0.13}},
           "layer_presets":[],"viewports":[]},
          "boards":[],"cvpcb":{"equivalence_files":[]},
          "libraries":{"pinned_footprint_libs":[],"pinned_symbol_libs":[]},
          "meta":{"filename":os.path.basename(path),"version":1},
-         "net_settings":{"classes":[{"bus_width":12,"clearance":0.25,
+         "net_settings":{"classes":[{"bus_width":12,"clearance":0.30,
             "diff_pair_gap":0.25,"diff_pair_width":0.2,"line_style":0,
             "microvia_diameter":0.3,"microvia_drill":0.1,"name":"Default",
             "pcb_color":"rgba(0,0,0,0.000)","schematic_color":"rgba(0,0,0,0.000)",

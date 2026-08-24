@@ -3,7 +3,7 @@
     "design_settings": {
       "defaults": {},
       "rules": {
-        "min_clearance": 0.2,
+        "min_clearance": 0.25,
         "min_track_width": 0.15,
         "min_through_hole_diameter": 0.3,
         "min_hole_to_hole": 0.45,
@@ -29,7 +29,7 @@
     "classes": [
       {
         "bus_width": 12,
-        "clearance": 0.25,
+        "clearance": 0.3,
         "diff_pair_gap": 0.25,
         "diff_pair_width": 0.2,
         "line_style": 0,

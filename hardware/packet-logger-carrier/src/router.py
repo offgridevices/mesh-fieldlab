@@ -133,6 +133,29 @@ class Router:
         blkv = self.build(net, tw, half=D.VIA_D/2.0)
         # seed set = pad 0 ; then connect each remaining pad to the tree
         def pad_cells(p):
+            """Arrival is the pad CENTRE only.  Letting the router stop anywhere
+            on the pad made traces clip in at the edge, which leaves an acute
+            trace/pad corner (an etch trap) and hangs the joint off the thinnest
+            part of the annular ring."""
+            cx, cy = p['x'], p['y']
+            if p['dslot']:
+                dw, dh = p['dslot']
+                # an oval slot may legitimately be entered along its long axis
+                if dh >= dw:
+                    return _span(cx, cy, 0.0, (dh - dw) / 2 - 0.15)
+                return _span(cx, cy, (dw - dh) / 2 - 0.15, 0.0)
+            return _span(cx, cy, 0.0, 0.0)
+
+        def _span(cx, cy, ax, ay, rad=0.055):
+            cells = set()
+            for j in range(gy(cy - ay - rad), gy(cy + ay + rad) + 1):
+                for i in range(gx(cx - ax - rad), gx(cx + ax + rad) + 1):
+                    if 0 <= i < NX and 0 <= j < NY:
+                        for l in range(NL):
+                            cells.add((l, i, j))
+            return cells
+
+        def _pad_cells_full(p):
             cells=set()
             k,par = pad_extent(p)
             if k=='rect':

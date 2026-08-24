@@ -7,7 +7,7 @@ Coordinates: millimetres, origin at board BOTTOM-LEFT, X right, Y UP.
 import math
 
 BW, BH = 86.0, 58.0          # board outline
-CLR      = 0.25              # copper clearance
+CLR      = 0.30              # copper clearance (fab minimum is 0.127)
 TW_SIG   = 0.25              # signal trace width
 TW_PWR   = 0.50              # 3V3 width
 TW_BAT   = 0.80              # battery width
