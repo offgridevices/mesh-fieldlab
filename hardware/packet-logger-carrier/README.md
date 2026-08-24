@@ -38,6 +38,12 @@ re-renders the same text through FreeType and compares shapes as a build gate.
 
 Mark height 5.4 mm, lockup 21 mm wide, cap height 2.3 mm.
 
+One deliberate departure: the brand SVG's own text baseline (`y=125`) leaves the
+wordmark sitting about **12% of the mark height too high**, which reads as
+misaligned at this size. The wordmark is dropped so its ink centre lands on the
+mark's area centroid (ring + node) — the optical centre. Worth correcting in the
+source asset too.
+
 No board house offers orange soldermask, so Ember is expressed the only way a
 PCB can: as **exposed copper**. The Beacon Ring is drawn on the copper layer
 with a matching opening in the soldermask, so it comes out as bare gold metal

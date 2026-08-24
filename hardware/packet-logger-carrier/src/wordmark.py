@@ -182,7 +182,7 @@ def _point_in(pt, poly):
     return inside
 
 
-def lockup(cx_mark, cy_mark, mark_height_mm, text='OFFGRID'):
+def lockup(cx_mark, cy_mark, mark_height_mm, text='OFFGRID', optical_align=True):
     """Place mark + wordmark using the brand SVG's own ratios.
 
     cx_mark/cy_mark  : where the MARK's bounding box centre lands, in mm
@@ -211,5 +211,22 @@ def lockup(cx_mark, cy_mark, mark_height_mm, text='OFFGRID'):
             q.append((cx_mark + (lx - mark_cx) * s,
                       cy_mark - (ly - mark_cy) * s))   # board y is up
         out.append(q)
+
+    if optical_align and out:
+        # The brand SVG's own baseline (y=125) leaves the wordmark riding about
+        # 12% of the mark height high - measurably off centre, and it reads as
+        # misaligned at this size. Drop the text so its ink centre sits on the
+        # mark's AREA centroid (ring + node), which is the optical centre.
+        import math as _m
+        ring_cy = cy_mark - 7.985 * s
+        node_cy = ring_cy + 67.97 * s
+        r_out, r_in, r_node = 69 * s, 47 * s, 17 * s
+        a_ring = _m.pi * (r_out**2 - r_in**2)
+        a_node = _m.pi * r_node**2
+        target = (a_ring * ring_cy + a_node * node_cy) / (a_ring + a_node)
+        ys = [y for q in out for (x, y) in q]
+        dy = target - (min(ys) + max(ys)) / 2.0
+        out = [[(x, y + dy) for (x, y) in q] for q in out]
+
     width_lockup = (TEXT_X + adv_fu * fs) - mark_x0
     return s, out, width_lockup
