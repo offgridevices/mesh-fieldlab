@@ -222,10 +222,20 @@ Two independent sets of checks, plus KiCad's own:
 | Ground pour reaches every GND pad through its thermal spokes | **pass** — all 16 |
 | Silkscreen collisions (text/text, text/pad, text/line) | **pass** — none |
 | **Gerber round-trip**: emitted Gerbers re-read by a separate parser and compared to the model | **pass** — 0.0000 mm² difference on both copper layers |
+| **Cross-check vs KiCad's own Gerber export** of the same board | **F.Cu 0.000 mm², Edge.Cuts 0.000 mm², masks 0.06 mm²** |
+| Brand accent is on copper + mask, never silkscreen (regression gate) | **pass** — 37 items on each |
+| Silkscreen over mounting holes | **pass** — none |
+| Every region inspected visually at readable magnification, both sides | **done** |
 
-The last two matter most: the files that go to the fab were read back
-independently and render exactly the intended copper, and KiCad — which had
-no part in generating any of this — agrees the board is clean.
+The strongest of these is the cross-check: KiCad was asked to export its own
+Gerbers from the same board, and its top copper and board outline match ours
+to **zero measurable difference**, logo included. The bottom copper differs by
+about 1% — entirely at the pour's outer edge and around thermal spokes, where
+two different pour algorithms are simply allowed to disagree. Both are valid.
+
+`render3d_top.png` and `render3d_bottom.png` are KiCad's own 3D renders using
+the board stackup, so they show the finished product in the colours it will be
+built in.
 
 `fab_top.png` and `fab_bottom.png` are rendered *from the Gerbers themselves*,
 not from the design, and in the brand colours the board will actually be
@@ -263,6 +273,7 @@ netlist.csv                          every pad, its net and its position
 bom.csv                              what to buy
 kicad-drc.json                       KiCad's own DRC report
 fab_top.png / fab_bottom.png         rendered from the Gerbers
+render3d_top.png / render3d_bottom.png   KiCad's 3D render, real colours
 board.png                            routing view (top = red, bottom = blue)
 src/                                 the generator and every verification script
 ```

@@ -248,8 +248,8 @@ def offgrid_mark(cx, cy, height=7.0, w=None):
     acc_disc(cx, ringy + 67.97*s, 17*s)
     return sw
 
-offgrid_mark(68.5, 6.0, 7.0)
-text(76.3, 6.0, 'OFFGRID', 1.1, just='left')   # wordmark stays Bone / white silk
+offgrid_mark(68.5, 6.7, 7.0)
+text(76.3, 6.7, 'OFFGRID', 1.1, just='left')   # wordmark stays Bone / white silk
 # clear space: brand asks for 1x node radius around the mark; the router is
 # told to keep all copper out of this box so the metal reads clean.
 LOGO_KEEPOUT = accent_bbox(0.9)

@@ -94,6 +94,8 @@ def emit(outdir):
         g=Gbr(func,'Negative')
         for p in D.pads:
             g.flash(pad_spec(p,MASK_EXP), p['x'], p['y'])
+        for (hx,hy,hd) in D.holes:
+            g.flash(('C', round(hd+2*MASK_EXP,4)), hx, hy)
         if fn=='F_Mask':
             for it in getattr(D,'accent',[]):
                 if it[0]=='line': g.draw(('C',it[5]), it[1],it[2],it[3],it[4])

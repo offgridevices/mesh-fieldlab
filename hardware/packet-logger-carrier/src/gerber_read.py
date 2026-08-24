@@ -55,13 +55,14 @@ class Ras:
                 ia=max(0,int(math.ceil(a/self.res))); ib=min(self.NX-1,int(b/self.res))
                 if ib>=ia: self.m[j,ia:ib+1]=val
 
-def parse(path, w, h, res=0.05):
+def parse(path, w, h, res=0.05, ox=0.0, oy=0.0):
     txt=open(path).read()
     ras=Ras(w,h,res)
     aps={}; cur=None; pol=True
     x=y=0.0
     inreg=False; regpts=[]
     scale=1e-6
+    arcmode=0            # 0 = linear, 2 = CW, 3 = CCW
     for tok in re.findall(r'%[^%]*%|[^\n*]*\*', txt):
         t=tok.strip()
         if t.startswith('%'):
@@ -71,6 +72,19 @@ def parse(path, w, h, res=0.05):
                 d=int(m.group(1)); shp=m.group(2)
                 nums=[float(v) for v in m.group(3).split('X')]
                 aps[d]=(shp,nums)
+                continue
+            m=re.match(r'ADD(\d+)RoundRect,(.+)',body)
+            if m:
+                d=int(m.group(1))
+                v=[float(t) for t in m.group(2).split('X')]
+                xs=v[1::2]; ys=v[2::2]
+                if xs and ys:
+                    aps[d]=('R',[max(xs)-min(xs), max(ys)-min(ys)])
+                continue
+            m=re.match(r'ADD(\d+)(?:O|Oval),(.+)',body)
+            if m:
+                d=int(m.group(1))
+                aps[d]=('O',[float(t) for t in m.group(2).split('X')])
             elif body=='LPD': pol=True
             elif body=='LPC': pol=False
             continue
@@ -80,16 +94,47 @@ def parse(path, w, h, res=0.05):
         if t=='G37':
             if len(regpts)>=3: ras.polygon(regpts,pol)
             inreg=False; continue
-        if t in ('G01','G04','M02') or t.startswith('G04'): continue
+        if t=='G01': arcmode=0; continue
+        if t=='G02': arcmode=2; continue
+        if t=='G03': arcmode=3; continue
+        if t in ('G74','G75','G36x','M02') or t.startswith('G04'): continue
         m=re.match(r'D(\d+)$',t)
         if m:
             d=int(m.group(1))
             if d>=10: cur=d
             continue
+        ma=re.match(r'(?:X(-?\d+))?(?:Y(-?\d+))?(?:I(-?\d+))?(?:J(-?\d+))?D0?1$',t)
+        if ma and arcmode in (2,3) and (ma.group(3) is not None or ma.group(4) is not None):
+            nx = float(ma.group(1))*scale+ox if ma.group(1) is not None else x
+            ny = float(ma.group(2))*scale+oy if ma.group(2) is not None else y
+            i0 = float(ma.group(3))*scale if ma.group(3) is not None else 0.0
+            j0 = float(ma.group(4))*scale if ma.group(4) is not None else 0.0
+            cx0, cy0 = x+i0, y+j0
+            r0 = math.hypot(x-cx0, y-cy0)
+            a0 = math.atan2(y-cy0, x-cx0); a1 = math.atan2(ny-cy0, nx-cx0)
+            if arcmode==2:
+                while a1 > a0: a1 -= 2*math.pi
+                if abs(a1-a0) < 1e-9: a1 = a0-2*math.pi
+            else:
+                while a1 < a0: a1 += 2*math.pi
+                if abs(a1-a0) < 1e-9: a1 = a0+2*math.pi
+            n=max(8,int(abs(a1-a0)*r0/0.02))
+            prev=(x,y)
+            for k in range(1,n+1):
+                aa=a0+(a1-a0)*k/n
+                pt=(cx0+r0*math.cos(aa), cy0+r0*math.sin(aa))
+                if inreg: regpts.append(pt)
+                elif cur in aps:
+                    shp,nums=aps[cur]
+                    ras.stad(prev[0],prev[1],pt[0],pt[1],
+                             (nums[0] if shp=='C' else min(nums))/2, pol)
+                prev=pt
+            x,y=nx,ny
+            continue
         mm=re.match(r'(?:X(-?\d+))?(?:Y(-?\d+))?D0?([123])$',t)
         if mm:
-            nx = float(mm.group(1))*scale if mm.group(1) is not None else x
-            ny = float(mm.group(2))*scale if mm.group(2) is not None else y
+            nx = float(mm.group(1))*scale+ox if mm.group(1) is not None else x
+            ny = float(mm.group(2))*scale+oy if mm.group(2) is not None else y
             op = mm.group(3)
             if inreg:
                 if op=='2': regpts=[(nx,ny)]

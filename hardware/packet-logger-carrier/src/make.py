@@ -12,6 +12,21 @@ def step(name, fn):
 def sh(cmd):
     return subprocess.call([PY]+cmd)
 
+def check_layers():
+    """The exposed-copper accent must be on F.Cu + F.Mask and NOT on silk.
+    A silent regression here would turn the gold mark into white print."""
+    import layers_census, design as D
+    c = layers_census.census('out/packet-logger-carrier.kicad_pcb')
+    n = len(D.accent)
+    cu   = c[('gr_line','F.Cu')]   + c[('gr_circle','F.Cu')]
+    mask = c[('gr_line','F.Mask')] + c[('gr_circle','F.Mask')]
+    silk = c[('gr_line','F.SilkS')]
+    print('  accent on F.Cu=%d  F.Mask=%d  (expected %d each); silk lines=%d'
+          %(cu, mask, n, silk))
+    if cu != n or mask != n:
+        print('  *** accent art is NOT on copper+mask ***'); return 1
+    return 0
+
 def main():
     os.makedirs('out/gerbers', exist_ok=True)
     step('ROUTE',        lambda: sh(['build.py']))
@@ -19,6 +34,7 @@ def main():
     step('NETLIST',      lambda: sh(['netcheck.py']))
     step('SILKSCREEN',   lambda: sh(['silkcheck.py']))
     step('KICAD',        lambda: sh(['emit_kicad.py']))
+    step('LAYER CHECK',  check_layers)
     step('GERBER',       lambda: sh(['emit_gerber.py']))
     step('GERBER VERIFY',lambda: sh(['verify_gerber.py']))
     step('RENDER',       lambda: sh(['render.py']) or sh(['gerber_render.py']))

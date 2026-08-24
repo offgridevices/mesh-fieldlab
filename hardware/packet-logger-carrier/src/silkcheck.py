@@ -54,6 +54,21 @@ def run(verbose=True):
             if o and o[0]>0.12 and o[1]>0.12:
                 hits.append(('TEXT/LINE','%r'%t[3],'seg %.1f,%.1f-%.1f,%.1f'%(x1,y1,x2,y2),
                              round(o[0],2),round(o[1],2)))
+    # text sitting on a mounting hole (fab would clip it; screw head covers it)
+    for t in texts:
+        tb=tbox(t)
+        for (hx,hy,hd) in D.holes:
+            hb=(hx-hd/2-0.2, hy-hd/2-0.2, hx+hd/2+0.2, hy+hd/2+0.2)
+            o=ov(tb,hb)
+            if o and o[0]>0.1 and o[1]>0.1:
+                hits.append(('TEXT/HOLE','%r'%t[3],'MH @%.1f,%.1f'%(hx,hy),
+                             round(o[0],2),round(o[1],2)))
+    for it in D.silk:
+        if it[0]!='disc': continue
+        _,dx,dy,dr,_l = it
+        for (hx,hy,hd) in D.holes:
+            if (dx-hx)**2+(dy-hy)**2 < (dr+hd/2+0.2)**2:
+                hits.append(('DISC/HOLE','logo dot','MH @%.1f,%.1f'%(hx,hy),0,0))
     # text outside board
     for t in texts:
         b=tbox(t)
