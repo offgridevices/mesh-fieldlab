@@ -40,6 +40,23 @@ def write(path):
         o.append('    (%d "%s" %s%s)'%(n,nm,ty,(' "%s"'%us) if us else ''))
     o.append('  )')
     o.append('  (setup')
+    # Physical stackup, so KiCad's 3D view shows the board in the colours it
+    # will actually be ordered in - and so the fab sees the intent too.
+    #   OffGrid: Pitch mask / Bone silkscreen / ENIG gold for the Ember accent
+    o.append('    (stackup')
+    o.append('      (layer "F.SilkS" (type "Top Silk Screen") (color "White"))')
+    o.append('      (layer "F.Paste" (type "Top Solder Paste"))')
+    o.append('      (layer "F.Mask" (type "Top Solder Mask") (color "Black") (thickness 0.01))')
+    o.append('      (layer "F.Cu" (type "copper") (thickness 0.035))')
+    o.append('      (layer "dielectric 1" (type "core") (thickness 1.51) '
+             '(material "FR4") (epsilon_r 4.5) (loss_tangent 0.02))')
+    o.append('      (layer "B.Cu" (type "copper") (thickness 0.035))')
+    o.append('      (layer "B.Mask" (type "Bottom Solder Mask") (color "Black") (thickness 0.01))')
+    o.append('      (layer "B.Paste" (type "Bottom Solder Paste"))')
+    o.append('      (layer "B.SilkS" (type "Bottom Silk Screen") (color "White"))')
+    o.append('      (copper_finish "ENIG")')
+    o.append('      (dielectric_constraints no)')
+    o.append('    )')
     o.append('    (pad_to_mask_clearance 0.05)')
     o.append('    (allow_soldermask_bridges_in_footprints no)')
     o.append('  )')
