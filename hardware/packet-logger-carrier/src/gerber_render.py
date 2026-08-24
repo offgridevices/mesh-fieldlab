@@ -32,16 +32,20 @@ def render(out='fab.png', bottom=False):
     dr   = drills()
     H,W = cu.shape
     img=np.zeros((H,W,3),np.uint8)
-    img[:,:] = (12,58,36)                      # solder mask over bare FR4
-    img[cu]  = (16,74,46)                      # mask over copper
+    # ---- OffGrid palette, as the board will actually be ordered ----
+    #   matte black soldermask  ~ Pitch  #1B1813
+    #   white silkscreen        ~ Bone   #F1ECE0
+    #   ENIG exposed copper     = the single Ember accent, in metal
+    img[:,:] = (27,24,19)                      # Pitch: mask over bare FR4
+    img[cu]  = (37,33,26)                      # mask sitting on copper
     ex = mask & cu
-    img[ex]  = (206,168,74)                    # exposed copper (ENIG)
-    img[mask & ~cu] = (150,124,70)             # mask opening w/o copper
-    img[silk]= (238,238,232)
-    img[dr]  = (8,8,10)
+    img[ex]  = (205,170,100)                   # ENIG gold - pads + the mark
+    img[mask & ~cu] = (120,104,74)             # opening with no copper behind
+    img[silk]= (241,236,224)                   # Bone
+    img[dr]  = (8,7,6)                         # Coal
     im=Image.fromarray(img[::-1])              # gerber Y-up -> image Y-down
     im=im.resize((int(W*0.42),int(H*0.42)), Image.LANCZOS)
-    bg=Image.new('RGB',(im.width+24,im.height+24),(26,28,32))
+    bg=Image.new('RGB',(im.width+24,im.height+24),(16,13,9))   # Coal surround
     bg.paste(im,(12,12)); bg.save(out)
     print(out, bg.size)
 

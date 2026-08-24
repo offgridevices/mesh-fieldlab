@@ -83,6 +83,10 @@ def emit(outdir):
             g.flash(pad_spec(p), p['x'], p['y'])
         for (n,x,y) in vias:
             g.flash(('C',D.VIA_D), x, y)
+        if layer==0:
+            for it in getattr(D,'accent',[]):
+                if it[0]=='line': g.draw(('C',it[5]), it[1],it[2],it[3],it[4])
+                else:             g.flash(('C',round(2*it[3],4)), it[1],it[2])
         f=os.path.join(outdir,'%s-%s.gbr'%(BASE,fn)); g.save(f); files.append(f)
 
     # ---------------- soldermask (pads open, vias tented)
@@ -90,6 +94,10 @@ def emit(outdir):
         g=Gbr(func,'Negative')
         for p in D.pads:
             g.flash(pad_spec(p,MASK_EXP), p['x'], p['y'])
+        if fn=='F_Mask':
+            for it in getattr(D,'accent',[]):
+                if it[0]=='line': g.draw(('C',it[5]), it[1],it[2],it[3],it[4])
+                else:             g.flash(('C',round(2*it[3],4)), it[1],it[2])
         f=os.path.join(outdir,'%s-%s.gbr'%(BASE,fn)); g.save(f); files.append(f)
 
     # ---------------- silkscreen

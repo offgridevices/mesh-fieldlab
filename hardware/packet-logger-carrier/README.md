@@ -13,6 +13,45 @@ format and KiCad's DRC reports **0 errors, 0 warnings, 0 unconnected**.
 
 ---
 
+## Brand colours — how to order it
+
+**Colour is not in the Gerber files.** Soldermask and silkscreen colour are
+options you pick in the fab's order form; the artwork is colour-blind. So
+"on-brand" here means two things: choosing the right options, and designing
+the artwork to suit them. Both are done.
+
+| OffGrid token | On the board | Order setting |
+|---|---|---|
+| **Pitch** `#1B1813` | Soldermask | **Matte black** (JLCPCB "Matt Black", PCBWay "Matte Black") |
+| **Bone** `#F1ECE0` | Silkscreen | **White** |
+| **Ember** `#FF6A00` | The Beacon Ring, in bare metal | **ENIG** surface finish |
+
+No board house offers orange soldermask, so Ember is expressed the only way a
+PCB can: as **exposed copper**. The Beacon Ring is drawn on the copper layer
+with a matching opening in the soldermask, so it comes out as bare gold metal
+against the black — the same warm accent, in the only material the process
+allows. The wordmark beside it stays white silkscreen, which keeps to the
+brand's **one accent per surface** rule: the ring is the accent, everything
+else is Bone on Pitch.
+
+ENIG rather than HASL matters here — HASL would coat the mark in solder and it
+would come out silver. ENIG also has a longer shelf life and a flatter finish.
+It costs a little more than the default; it is the difference between a gold
+mark and a grey one.
+
+The board outline is a plain rectangle with square corners, per the brand's
+right-angles-only geometry rule.
+
+**Full order settings:** 2 layers · 1.6 mm · **Matte black** mask · **White**
+silkscreen · **ENIG** finish · 86 × 58 mm · qty 5.
+
+One practical note: matte black shows fingerprints and dust more than green,
+and cosmetic consistency between batches is slightly looser. Nothing about it
+affects how the board works — our traces are 0.25 mm against a 0.127 mm
+process minimum, so there is a wide margin.
+
+---
+
 ## ⚠ Read this before you order
 
 **The RAK19003's two headers are NOT a whole number of protoboard holes apart.**
@@ -124,13 +163,14 @@ bridge the two pads with solder.
 
 ## Ordering
 
-JLCPCB or PCBWay, default everything:
+JLCPCB or PCBWay:
 
-* 2 layers, 1.6 mm, HASL or ENIG, any colour
+* 2 layers, 1.6 mm, **matte black mask, white silkscreen, ENIG finish** (see Brand colours above)
 * **86 × 58 mm** — inside the cheap 100 × 100 mm tier
 * Upload `packet-logger-carrier-gerbers.zip` as-is
 * Minimum order is 5; you need 4, so you get a spare
-* Expect roughly $2–5 for the boards plus shipping, about 1–2 weeks
+* Expect roughly $2–5 for the bare boards; ENIG and the black mask add a
+  few dollars. Plus shipping, about 1–2 weeks.
 
 The zip contains top and bottom copper, both soldermasks, top silkscreen,
 board outline, and separate plated / non-plated drill files. J7's oval slots
@@ -188,7 +228,8 @@ independently and render exactly the intended copper, and KiCad — which had
 no part in generating any of this — agrees the board is clean.
 
 `fab_top.png` and `fab_bottom.png` are rendered *from the Gerbers themselves*,
-not from the design, so what you see there is what will be manufactured.
+not from the design, and in the brand colours the board will actually be
+ordered in - so what you see there is what will be manufactured.
 
 ---
 

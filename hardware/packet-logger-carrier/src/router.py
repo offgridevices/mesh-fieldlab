@@ -83,6 +83,10 @@ class Router:
             blk[l][:, min(NX,gx(D.BW-m))+1:] = True
             blk[l][:max(0,gy(m)), :] = True
             blk[l][min(NY,gy(D.BH-m))+1:, :] = True
+        # brand accent art is exposed copper on F.Cu - nothing may route through it
+        kz = getattr(D, 'LOGO_KEEPOUT', None)
+        if kz:
+            box(blk[0], kz[0], kz[1], kz[2], kz[3], half)
         # NPTH mounting holes (both layers)
         for (hx,hy,hd) in D.holes:
             for l in range(NL):

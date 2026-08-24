@@ -21,6 +21,10 @@ def model_copper(layer, tracks, vias, prects):
             else:    r.stad(p['x']-(a-b)/2,p['y'],p['x']+(a-b)/2,p['y'],rr)
         else: r.disc(p['x'],p['y'],max(p['w'],p['h'])/2)
     for (n,x,y) in vias: r.disc(x,y,D.VIA_D/2)
+    if layer==0:
+        for it in getattr(D,'accent',[]):
+            if it[0]=='line': r.stad(it[1],it[2],it[3],it[4],it[5]/2)
+            else:             r.disc(it[1],it[2],it[3])
     return r.m
 
 def main():

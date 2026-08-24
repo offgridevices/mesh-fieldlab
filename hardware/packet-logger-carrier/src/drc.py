@@ -77,6 +77,13 @@ def build_objs(tracks,vias):
         objs.append(Obj(n,(l,),[((x0,y0),(x1,y1))],w/2,None,'trk%d'%i))
     for i,(n,x,y) in enumerate(vias):
         objs.append(Obj(n,(0,1),[((x,y),(x,y))],D.VIA_D/2,None,'via%d'%i))
+    for i,it in enumerate(getattr(D,'accent',[])):
+        if it[0]=='line':
+            _,x0,y0,x1,y1,w,_l = it
+            objs.append(Obj('~ACCENT',(0,),[((x0,y0),(x1,y1))],w/2,None,'accent%d'%i))
+        else:
+            _,x,y,rr,_l = it
+            objs.append(Obj('~ACCENT',(0,),[((x,y),(x,y))],rr,None,'accentdot%d'%i))
     return objs
 
 # ------------------------------------------------------------------ raster

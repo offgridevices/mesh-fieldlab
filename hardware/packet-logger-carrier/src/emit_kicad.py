@@ -103,6 +103,21 @@ def write(path):
             o.append('  (gr_text "%s" (at %s %s %d) (layer "F.SilkS") (uuid "%s")'
                      %(s.replace('"','\''),KX(x),KY(y),angle,U()))
             o.append('    (effects (font (size %s %s) (thickness %s))%s))'%(size,size,round(th,3),j))
+    # ---------------- brand accent: exposed copper (F.Cu) + mask opening
+    for it in getattr(D,'accent',[]):
+        for lay in ('F.Cu','F.Mask'):
+            if it[0]=='line':
+                _,x1,y1,x2,y2,w,_l = it
+                o.append('  (gr_line (start %s %s) (end %s %s) '
+                         '(stroke (width %s) (type solid)) (layer "%s") (uuid "%s"))'
+                         %(KX(x1),KY(y1),KX(x2),KY(y2),round(w,4),lay,U()))
+            else:
+                _,x,y,rr,_l = it
+                o.append('  (gr_circle (center %s %s) (end %s %s) '
+                         '(stroke (width 0.05) (type solid)) (fill solid) '
+                         '(layer "%s") (uuid "%s"))'
+                         %(KX(x),KY(y),KX(x+rr),KY(y),lay,U()))
+
     # ---------------- outline
     pts=D.outline+[D.outline[0]]
     for k in range(len(pts)-1):

@@ -20,6 +20,9 @@ pads   = []
 outline= []
 silk   = []   # ('line',...) / ('text',...) / ('disc',x,y,r,layer)
 holes  = []   # NPTH  (x,y,d)
+accent = []   # EXPOSED COPPER art: drawn on F.Cu with a matching F.Mask
+              # opening, so it reads as bare metal instead of silkscreen.
+              # Brand rule: one accent per surface - this is it.
 
 def pad(ref, pin, x, y, net, shape='circle', w=1.6, h=1.6, drill=1.0, dslot=None):
     if str(pin) == '1' and shape == 'circle':
@@ -51,6 +54,25 @@ def text(x,y,s,size=1.0,just='center',angle=0,layer='silk',thick=None):
 def polyline(pts,w=0.15,layer='silk'):
     for k in range(1,len(pts)):
         line(pts[k-1][0],pts[k-1][1],pts[k][0],pts[k][1],w,layer)
+
+def acc_line(x1,y1,x2,y2,w):  accent.append(('line',x1,y1,x2,y2,w,'accent'))
+def acc_disc(x,y,r):          accent.append(('disc',x,y,r,'accent'))
+def acc_polyline(pts,w):
+    for k in range(1,len(pts)):
+        acc_line(pts[k-1][0],pts[k-1][1],pts[k][0],pts[k][1],w)
+
+def accent_bbox(m=0.0):
+    xs=[]; ys=[]
+    for it in accent:
+        if it[0]=='line':
+            _,x1,y1,x2,y2,w,_l = it
+            xs += [min(x1,x2)-w/2, max(x1,x2)+w/2]
+            ys += [min(y1,y2)-w/2, max(y1,y2)+w/2]
+        else:
+            _,x,y,r,_l = it
+            xs += [x-r, x+r]; ys += [y-r, y+r]
+    if not xs: return None
+    return (min(xs)-m, min(ys)-m, max(xs)+m, max(ys)+m)
 
 # ----------------------------------------------------------------- board
 outline = [(0,0),(BW,0),(BW,BH),(0,BH)]
@@ -222,12 +244,15 @@ def offgrid_mark(cx, cy, height=7.0, w=None):
     for k in range(N+1):
         th = math.radians(-65.0 + 310.0*k/N)
         pts.append((cx + R*math.cos(th), ringy - R*math.sin(th)))
-    polyline(pts, sw)
-    disc(cx, ringy + 67.97*s, 17*s)
+    acc_polyline(pts, sw)                    # <- exposed copper, not silkscreen
+    acc_disc(cx, ringy + 67.97*s, 17*s)
     return sw
 
 offgrid_mark(68.5, 6.0, 7.0)
-text(76.3, 6.0, 'OFFGRID', 1.1, just='left')
+text(76.3, 6.0, 'OFFGRID', 1.1, just='left')   # wordmark stays Bone / white silk
+# clear space: brand asks for 1x node radius around the mark; the router is
+# told to keep all copper out of this box so the metal reads clean.
+LOGO_KEEPOUT = accent_bbox(0.9)
 
 # ---- board legend
 text(20.0, 56.6, 'PACKET LOGGER CARRIER V1 - 86 X 58', 0.9)
