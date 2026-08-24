@@ -15,7 +15,8 @@ for i,(nm,_) in enumerate(D.J7):  LBL[('J2',str(i+1))] = 'RAK.J7.'+nm
 for i,nm in enumerate(D.XBOT):    LBL[('J3',str(i+1))] = 'XIAO.'+nm
 for i,nm in enumerate(D.XTOP):    LBL[('J3',str(8+i))] = 'XIAO.'+nm
 for i,(nm,_) in enumerate(D.SDPINS): LBL[('J4',str(i+1))] = 'SD.'+nm
-for i,(nm,_) in enumerate(D.LIDP):   LBL[('J5',str(i+1))] = 'LID.'+nm
+for i,(nm,_) in enumerate(D.OLED):   LBL[('J5',str(i+1))] = 'OLED.'+nm
+for i,nm in enumerate(['BTN','GND']): LBL[('J15',str(i+1))] = 'EXTBTN.'+nm
 
 EXPECT = {
  'RAK_RX0' : {'RAK.J7.RX0','XIAO.D6'},
@@ -24,8 +25,8 @@ EXPECT = {
  'SD_MOSI' : {'SD.MOSI','XIAO.D10'},
  'SD_CLK'  : {'SD.CLK','XIAO.D8'},
  'SD_MISO' : {'SD.MISO','XIAO.D9'},
- 'OLED_SCL': {'LID.SCL','XIAO.D5'},
- 'OLED_SDA': {'LID.SDA','XIAO.D4'},
+ 'OLED_SCL': {'OLED.SCL','XIAO.D5'},
+ 'OLED_SDA': {'OLED.SDA','XIAO.D4'},
 }
 bad=[]
 print('%-10s %s' % ('NET','PADS'))
@@ -34,22 +35,22 @@ for n in sorted(byname):
     print('%-10s %s' % (n, ', '.join(names)))
 for n,exp in EXPECT.items():
     got = {lab(r,p) for (r,p) in byname[n]}
-    core = {g for g in got if g.startswith(('RAK.','XIAO.','SD.','LID.'))}
+    core = {g for g in got if g.startswith(('RAK.','XIAO.','SD.','OLED.'))}
     if core != exp:
         bad.append('%s: expected %s got %s' % (n, sorted(exp), sorted(core)))
 
 # power / ground membership
 p3 = {lab(r,p) for (r,p) in byname['+3V3']}
-need3 = {'XIAO.3V3','SD.3V3','LID.3V3'}
+need3 = {'XIAO.3V3','SD.3V3','OLED.3V3'}
 if not need3 <= p3: bad.append('+3V3 missing %s' % sorted(need3-p3))
 raw = {lab(r,p) for (r,p) in byname['RAW_3V3']}
 if 'RAK.J6.VDD' not in raw: bad.append('RAK VDD not on RAW_3V3')
 g = {lab(r,p) for (r,p) in byname['GND']}
-needg = {'RAK.J6.GND','RAK.J7.GND','XIAO.GND','SD.GND','LID.GND'}
+needg = {'RAK.J6.GND','RAK.J7.GND','XIAO.GND','SD.GND','OLED.GND'}
 if not needg <= g: bad.append('GND missing %s' % sorted(needg-g))
 # button
 b = {lab(r,p) for (r,p) in byname['BTN']}
-if not {'XIAO.D0','LID.BTN'} <= b: bad.append('BTN wrong: %s'%sorted(b))
+if not {'XIAO.D0','EXTBTN.BTN'} <= b: bad.append('BTN wrong: %s'%sorted(b))
 if ('SW1','1') not in byname['BTN']: bad.append('SW1 not on BTN')
 if ('SW1','2') not in byname['GND']: bad.append('SW1 other side not on GND')
 # battery chain

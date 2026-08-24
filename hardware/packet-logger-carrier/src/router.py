@@ -26,6 +26,12 @@ def disc(mask, x, y, r):
     d2 = jj[:,None]**2 + ii[None,:]**2
     mask[j0:j1+1, i0:i1+1] |= (d2 <= r*r)
 
+def box(mask, x0,y0,x1,y1, grow):
+    i0,i1 = max(0,gx(x0-grow)), min(NX-1,gx(x1+grow))
+    j0,j1 = max(0,gy(y0-grow)), min(NY-1,gy(y1+grow))
+    if i1<i0 or j1<j0: return
+    mask[j0:j1+1, i0:i1+1] = True
+
 def stadium(mask, x0,y0,x1,y1, r):
     """thick line with round caps"""
     if r<=0: return
@@ -47,7 +53,10 @@ def stadium(mask, x0,y0,x1,y1, r):
     mask[j0:j1+1, i0:i1+1] |= (d2 <= r*r)
 
 def pad_extent(p):
-    """returns (kind, params, halfspan) describing pad copper"""
+    """returns (kind, params) describing pad copper"""
+    if p['shape']=='rect':
+        return ('rect', (p['x']-p['w']/2, p['y']-p['h']/2,
+                         p['x']+p['w']/2, p['y']+p['h']/2))
     if p['shape']=='oval':
         # stadium of width w, height h -> segment along the long axis
         w,h = p['w'],p['h']
@@ -81,16 +90,25 @@ class Router:
         # pads
         for p in D.pads:
             same = (p['net']==net)
-            k,par = pad_extent(p)
-            grow = (0.0 if same else D.CLR+half)
             if same:
                 continue                      # own-net pads are targets
+            k,par = pad_extent(p)
+            grow = D.CLR + half
+            # Keep BOTTOM-layer copper well clear of GND pads.  The ground pour
+            # lives on B.Cu and has to be able to reach every GND pad through
+            # its thermal spokes; a trace squeezing past on both sides fences
+            # the pad off.  1.0 mm leaves room for a 0.65 mm spoke.
+            growb = max(grow, 1.00 + half) if p['net']=='GND' else grow
+            gl = (grow, growb)
             if k=='disc':
                 x,y,r = par
-                for l in range(NL): disc(blk[l], x,y, r+grow)
+                for l in range(NL): disc(blk[l], x,y, r+gl[l])
+            elif k=='rect':
+                x0,y0,x1,y1 = par
+                for l in range(NL): box(blk[l], x0,y0,x1,y1, gl[l])
             else:
                 x0,y0,x1,y1,r = par
-                for l in range(NL): stadium(blk[l], x0,y0,x1,y1, r+grow)
+                for l in range(NL): stadium(blk[l], x0,y0,x1,y1, r+gl[l])
         # existing tracks
         for (n,l,x0,y0,x1,y1,w) in self.tracks:
             if n==net: continue
@@ -113,6 +131,12 @@ class Router:
         def pad_cells(p):
             cells=set()
             k,par = pad_extent(p)
+            if k=='rect':
+                x0,y0,x1,y1 = par
+                for j in range(max(0,gy(y0+0.15)),min(NY-1,gy(y1-0.15))+1):
+                    for i in range(max(0,gx(x0+0.15)),min(NX-1,gx(x1-0.15))+1):
+                        for l in range(NL): cells.add((l,i,j))
+                return cells
             if k=='disc':
                 x,y,r = par
                 for j in range(max(0,gy(y-r)),min(NY-1,gy(y+r))+1):

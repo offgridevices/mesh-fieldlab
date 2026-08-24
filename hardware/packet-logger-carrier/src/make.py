@@ -22,6 +22,36 @@ def main():
     step('GERBER',       lambda: sh(['emit_gerber.py']))
     step('GERBER VERIFY',lambda: sh(['verify_gerber.py']))
     step('RENDER',       lambda: sh(['render.py']) or sh(['gerber_render.py']))
+    # --- hand the board to KiCad 10 itself: fill the zone, re-save in its
+    #     native format, and run its DRC as an independent check
+    KI='/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
+    if os.path.exists(KI):
+        rc=subprocess.call([KI,'pcb','drc','--format','json','--severity-all',
+                            '--refill-zones','--save-board',
+                            '--output','out/kicad-drc.json',
+                            'out/packet-logger-carrier.kicad_pcb'])
+        # rebuild the footprint library from the board KiCad just saved, so the
+        # library and the board agree exactly, then re-run DRC
+        subprocess.call([PY,'relib.py','out/packet-logger-carrier.kicad_pcb','out'])
+        subprocess.call([KI,'pcb','drc','--format','json','--severity-all',
+                         '--refill-zones','--save-board',
+                         '--output','out/kicad-drc.json',
+                         'out/packet-logger-carrier.kicad_pcb'])
+        import json as _j
+        rep=_j.load(open('out/kicad-drc.json'))
+        errs=[v for v in rep['violations'] if v.get('severity')=='error']
+        warns=[v for v in rep['violations'] if v.get('severity')!='error']
+        unc=rep['unconnected_items']
+        print('KiCad 10 DRC: %d error(s), %d warning(s), %d unconnected'
+              %(len(errs),len(warns),len(unc)))
+        for v in (errs+warns)[:10]:
+            print('   [%s] %s - %s'%(v.get('severity'),v['type'],
+                                     v.get('description','')[:80]))
+        if errs or unc:
+            print('*** KICAD DRC FAILED ***'); sys.exit(1)
+    else:
+        print('kicad-cli not found - skipping KiCad cross-check')
+
     # zip for the fab house
     z='out/packet-logger-carrier-gerbers.zip'
     with zipfile.ZipFile(z,'w',zipfile.ZIP_DEFLATED) as zf:

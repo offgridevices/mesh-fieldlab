@@ -6,7 +6,10 @@ add a button and a power switch, and every connection in the build record is
 made in copper instead of wire.
 
 **Board: 86 × 58 mm, 2 layers, 1.6 mm FR4.**
-64 solder points total. 91 track segments, 9 vias, full ground plane underneath.
+65 solder points. 98 track segments, 8 vias, full ground plane underneath.
+
+Opens in **KiCad 10** — the board file is saved in KiCad 10's own native
+format and KiCad's DRC reports **0 errors, 0 warnings, 0 unconnected**.
 
 ---
 
@@ -34,27 +37,41 @@ solders up whether the true gap is the datasheet's 9.41 or a full 10.16.
 
 **Still do this before ordering:** put a caliper across your actual RAK from
 the centre of the SDA pin to the centre of the BOOT pin. Anything in
-9.2 – 10.3 mm is covered. If it is outside that, tell me and I will re-cut the
-footprint.
+9.2 – 10.3 mm is covered.
 
 ---
 
-## Pin order — verified against the datasheet, not guessed
+## How each module sits
 
-Looking at the board with the RAK's body pointing away from you (its USB-C,
-battery, solar and reset are all on the far edge), left to right:
+Hold the board with the text the right way up. Then:
+
+**RAK19003** — pins along the bottom, body reaching up. Its USB-C, battery,
+solar and reset are all on the **far (top) edge**, so they stay reachable.
+Left to right the pins read:
 
 ```
 J6:  VDD   GND   SCL   SDA        [ 9.41 mm gap ]        J7:  BOOT  GND  TX0  RX0
 ```
 
-This is confirmed two independent ways: it is what you read off your own
-board, and it is what RAK's Figure 3 shows once you rotate the board 90° to
-match how you have it mounted. The Rev E silkscreen says **TX0 / RX0** (the
-older datasheet table calls the same pins TX1 / RX1 — same physical pins).
+Confirmed two independent ways: it is what you read off your own board, and it
+is what RAK's Figure 3 shows once you rotate the board 90° to match how you
+have it mounted. The Rev E silkscreen says **TX0 / RX0** (the older datasheet
+table calls the same pins TX1 / RX1 — same physical pins).
 
-Every pad on the PCB is labelled in silkscreen with the name printed on the
-module it mates with.
+**XIAO ESP32-C6** — **USB-C points east**, out to the right-hand edge, so you
+can plug in to reprogram it without taking anything apart. Reading the bottom
+row from the USB end back: 5V, GND, 3V3, D10, D9, D8, D7 — the standard XIAO
+order.
+
+**microSD** — pins along the **top** of the module, body hanging **down toward
+the bottom edge of the board**, so the card slot ends up at the edge and you
+can pull the card without opening the box. Left to right the pins read:
+
+```
+3V3   CS   MOSI   CLK   MISO   GND
+```
+
+with **3V3 on the square pad** — matching the module you have.
 
 ---
 
@@ -63,11 +80,12 @@ module it mates with.
 | Ref | What | Pins |
 |---|---|---|
 | J1 / J2 | RAK19003 J6 and J7 | 4 + 4 |
-| J3 | XIAO ESP32-C6, 2×7, rows 15.24 mm apart, **USB-C faces east** | 14 |
+| J3 | XIAO ESP32-C6, 2×7, rows 15.24 mm apart | 14 |
 | J4 | microSD breakout, 1×6 | 6 |
-| J5 | **Lid cable** — GND, 3V3, SCL, SDA, BTN | 5 |
+| **J5** | **OLED display — GND, 3V3, SCL, SDA. Nothing else on it.** | **4** |
+| J15 | External button, if you want one off-board — BTN, GND | 2 |
 | SW1 | User button, 6 mm tact, on the board | 4 |
-| SW2 | Power switch — centre pin is the input | 3 |
+| SW2 | **SS-12D00 / SS12D00G6 power slide switch, mounts on the board** | 3 |
 | J12 / J13 | Battery in — bare wires or JST-PH 2.0, wired in parallel | 2 + 2 |
 | J14 | Switched battery out → the RAK's own battery socket | 2 |
 | J10 | RAK spare: BOOT, SCL, SDA, GND | 4 |
@@ -75,10 +93,21 @@ module it mates with.
 | JP1 | 3V3 link — **fit a shunt** (see below) | 2 |
 | C1–C4 | Decoupling, all optional, all 2.54 mm lead pitch | 8 |
 
-**Your one ribbon cable is J5** — five conductors to the lid, in the same
-order as the cable you already made for the protoboard: GND, 3V3, BTN, SCL,
-SDA. The button is on the board *and* on J5 pin 5 in parallel, so you can use
-either or both.
+### The power switch
+
+**SW2 takes your SS12D00G6 directly** — three pins on 2.54 mm, which is
+exactly what that switch has, so it drops in and solders. The body outline on
+the silkscreen is the 8.0 × 4.0 mm footprint of the switch. The **centre pin
+is the input** (battery +); the switched output leaves on the pin marked OUT.
+The third pin is unconnected. If you would rather use a panel switch, wire it
+to OUT and IN instead.
+
+### The display
+
+**J5 is the display and only the display** — four pins, GND, 3V3, SCL, SDA,
+all together, labelled on the board. The button is a separate 2-pin header
+(J15) right next to it, wired in parallel with the button on the board, so you
+can use either, both, or neither.
 
 ### The 3V3 link (JP1)
 
@@ -88,9 +117,8 @@ XIAO, the card and the OLED. Fit a jumper shunt for normal use.
 Pull the shunt when you want to program the XIAO over USB with the RAK
 powered — it stops the RAK's regulator and the XIAO's regulator fighting over
 the same rail. With the shunt out, USB still powers the XIAO, the card and
-the screen; only the RAK is separated.
-
-If you'd rather never think about it, bridge the two pads with solder.
+the screen; only the RAK is separated. If you'd rather never think about it,
+bridge the two pads with solder.
 
 ---
 
@@ -115,12 +143,12 @@ as standard.
 
 1. **C1–C4 first** if you're fitting them (lowest parts first). They're optional.
 2. **JP1**, then the shunt.
-3. **SW1** the tact switch, **SW2** the slide switch (or wires to a panel switch).
+3. **SW1** the tact switch, **SW2** the slide switch.
 4. **J12/J13** battery in, **J14** battery out.
-5. **J5, J10, J11** male headers.
+5. **J5, J10, J11, J15** male headers.
 6. **Female headers last**: J1, J2 (RAK), J3 (XIAO), J4 (card).
 7. Plug the modules in. Wire a JST-PH pigtail from **J14** to the RAK's own
-   battery socket, and run the 5-way cable from **J5** to the lid.
+   battery socket, and a 4-way cable from **J5** to the display.
 
 Every GND pin sits on a thermal relief, so they solder with a normal iron
 instead of sinking all the heat into the ground plane.
@@ -140,57 +168,67 @@ fine — just don't scrape it.
 
 ## What was checked
 
-I could not install KiCad on this machine (its installer wanted an admin
-password), so instead of leaning on KiCad's DRC I wrote independent checks and
-ran them against the finished files:
+Two independent sets of checks, plus KiCad's own:
 
 | Check | Result |
 |---|---|
-| Copper clearance, every pair of objects on a shared layer | **pass** — minimum 0.25 mm designed, 0.20 mm required |
+| **KiCad 10 DRC** (the real thing, zones filled) | **0 errors, 0 warnings, 0 unconnected** |
+| Copper clearance, every pair of objects on a shared layer | **pass** — 0.25 mm minimum |
 | Net connectivity, by flood-fill over both layers | **pass** — every pad on every net reachable |
 | Netlist vs. the proven protoboard wiring | **pass** — identical, pin for pin |
 | Drill-to-drill spacing | **pass** — minimum 0.45 mm |
 | Annular ring | **pass** — minimum 0.15 mm |
 | Copper and drills inside the board edge | **pass** |
-| Ground pour reaches every GND pad through its thermal spokes | **pass** — all 15 |
-| Silkscreen collisions (text over text, text over pads) | **pass** — none |
-| **Gerber round-trip**: re-read the emitted Gerbers with a separate parser and compared to the model | **pass** — 0.0000 mm² difference on both copper layers |
+| Ground pour reaches every GND pad through its thermal spokes | **pass** — all 16 |
+| Silkscreen collisions (text/text, text/pad, text/line) | **pass** — none |
+| **Gerber round-trip**: emitted Gerbers re-read by a separate parser and compared to the model | **pass** — 0.0000 mm² difference on both copper layers |
 
-The last one is the important one: the files that go to the fab were read back
-independently and render exactly the intended copper.
+The last two matter most: the files that go to the fab were read back
+independently and render exactly the intended copper, and KiCad — which had
+no part in generating any of this — agrees the board is clean.
 
 `fab_top.png` and `fab_bottom.png` are rendered *from the Gerbers themselves*,
-not from the design — what you see there is what will be manufactured.
+not from the design, so what you see there is what will be manufactured.
 
 ---
 
 ## Assumptions worth knowing
 
-1. **microSD module size.** Yours is a 6-pin 3.3 V board with pins reading
-   3V3, CS, MOSI, CLK, MISO, GND. I reserved a 24 × 22 mm box for its body
-   (dashed on the silkscreen). If your module is bigger it will overhang the
-   dashed box — harmless, but check it doesn't foul the XIAO. The six pads
-   and their order are certain; only the body outline is an estimate.
-2. **XIAO row spacing** is 15.24 mm (0.6"), the standard for every XIAO. This
+1. **microSD module size.** The six pads and their order are certain (you read
+   them off the board). I reserved a 24 × 21 mm box for the body, shown dashed
+   on the silkscreen, with the card slot pointing at the board edge. If your
+   module is longer it will simply overhang the edge, which is fine — better,
+   even. If it is much shorter, the slot will sit a few mm inside the edge and
+   the enclosure cut-out needs to allow for that.
+2. **OLED pin order** is taken as GND, 3V3, SCL, SDA, the usual order on a
+   0.91" I2C module and the same order as your existing lid cable. Worth a
+   glance at your screen before you solder the header.
+3. **XIAO row spacing** is 15.24 mm (0.6"), the standard for every XIAO. This
    matches your protoboard, where the two columns were six holes apart.
-3. **The RAK gap**, as above — the one thing to measure.
-4. There is no schematic file, only the PCB. `netlist.csv` is the full record
+4. **The RAK gap**, as above — the one thing to measure.
+5. There is no schematic file, only the PCB. `netlist.csv` is the full record
    of what connects to what.
 
 ## Files
 
 ```
-packet-logger-carrier.kicad_pcb      open this in KiCad (7, 8 or 9)
+packet-logger-carrier.kicad_pcb      open this in KiCad 10
 packet-logger-carrier.kicad_pro      project file
+packetlogger.pretty/                 footprint library (so nothing is unresolved)
+fp-lib-table                         points KiCad at that library
 packet-logger-carrier-gerbers.zip    <- upload this to JLCPCB / PCBWay
 gerbers/                             the same files, unzipped
 netlist.csv                          every pad, its net and its position
 bom.csv                              what to buy
+kicad-drc.json                       KiCad's own DRC report
 fab_top.png / fab_bottom.png         rendered from the Gerbers
 board.png                            routing view (top = red, bottom = blue)
-src/                                 the generator + all the verification code
+src/                                 the generator and every verification script
 ```
 
-To open in KiCad: `File → Open`, pick `packet-logger-carrier.kicad_pcb`.
-The ground pour is defined as a zone; press **B** to fill it on screen.
-KiCad's own DRC should also come up clean — if it flags anything, tell me.
+To open: `File → Open`, pick `packet-logger-carrier.kicad_pcb`. The ground
+pour is already filled, so it looks right immediately.
+
+To rebuild everything from source: `cd src && python make.py` — it routes,
+runs every check, writes the KiCad and Gerber files, hands the board to
+KiCad 10 for a final DRC, and refuses to finish if anything fails.

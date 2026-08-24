@@ -87,7 +87,13 @@ def write(path):
 
     # ---------------- silkscreen
     for it in D.silk:
-        if it[0]=='line':
+        if it[0]=='disc':
+            _,dx,dy,dr,_l = it
+            o.append('  (gr_circle (center %s %s) (end %s %s) '
+                     '(stroke (width 0.05) (type solid)) (fill solid) '
+                     '(layer "F.SilkS") (uuid "%s"))'
+                     %(KX(dx),KY(dy),KX(dx+dr),KY(dy),U()))
+        elif it[0]=='line':
             _,x1,y1,x2,y2,w,layer=it
             o.append('  (gr_line (start %s %s) (end %s %s) (stroke (width %s) (type solid)) '
                      '(layer "F.SilkS") (uuid "%s"))'%(KX(x1),KY(y1),KX(x2),KY(y2),w,U()))
@@ -126,6 +132,57 @@ def write(path):
     open(path,'w').write('\n'.join(o)+'\n')
     print('wrote', path, os.path.getsize(path), 'bytes;', len(tracks),'segments,',len(vias),'vias')
 
+def write_library(outdir):
+    """Emit a real .pretty library so KiCad can resolve every footprint."""
+    import collections
+    lib=os.path.join(outdir,'packetlogger.pretty')
+    os.makedirs(lib,exist_ok=True)
+    groups=collections.OrderedDict()
+    for p in D.pads: groups.setdefault(p['ref'],[]).append(p)
+    n=0
+    for ref,pl in groups.items():
+        cx=sum(q['x'] for q in pl)/len(pl); cy=sum(q['y'] for q in pl)/len(pl)
+        o=['(footprint "%s"'%ref,
+           '  (version 20221018)',
+           '  (generator "packet-logger-carrier")',
+           '  (layer "F.Cu")',
+           '  (descr "%s")'%VALUE.get(ref,ref),
+           '  (attr through_hole)',
+           '  (fp_text reference "REF**" (at 0 -4.2) (layer "F.Fab") (uuid "%s")'%U(),
+           '    (effects (font (size 0.8 0.8) (thickness 0.12))))',
+           '  (fp_text value "%s" (at 0 4.2) (layer "F.Fab") hide (uuid "%s")'%(VALUE.get(ref,ref),U()),
+           '    (effects (font (size 0.8 0.8) (thickness 0.12))))']
+        for q in pl:
+            dx=round(q['x']-cx,4); dy=round(-(q['y']-cy),4)
+            shp=q['shape']
+            drill=('(drill oval %s %s)'%q['dslot']) if q['dslot'] else ('(drill %s)'%q['drill'])
+            o.append('  (pad "%s" thru_hole %s (at %s %s) (size %s %s) %s '
+                     '(layers "*.Cu" "*.Mask") (uuid "%s"))'
+                     %(q['pin'],shp,dx,dy,q['w'],q['h'],drill,U()))
+        o.append(')')
+        open(os.path.join(lib,'%s.kicad_mod'%ref),'w').write('\n'.join(o)+'\n')
+        n+=1
+    # mounting hole footprint
+    o=['(footprint "MountingHole")','  (version 20221018)',
+       '  (generator "packet-logger-carrier")','  (layer "F.Cu")',
+       '  (descr "M3 clearance hole, non-plated")',
+       '  (attr exclude_from_pos_files exclude_from_bom)',
+       '  (fp_text reference "REF**" (at 0 -2.6) (layer "F.Fab") (uuid "%s")'%U(),
+       '    (effects (font (size 0.7 0.7) (thickness 0.1))))',
+       '  (fp_text value "M3" (at 0 2.6) (layer "F.Fab") hide (uuid "%s")'%U(),
+       '    (effects (font (size 0.7 0.7) (thickness 0.1))))',
+       '  (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2) '
+       '(layers "F&B.Cu" "*.Mask") (uuid "%s"))'%U(),
+       ')']
+    open(os.path.join(lib,'MountingHole.kicad_mod'),'w').write('\n'.join(o)+'\n')
+    n+=1
+    open(os.path.join(outdir,'fp-lib-table'),'w').write(
+        '(fp_lib_table\n  (version 7)\n'
+        '  (lib (name "packetlogger")(type "KiCad")'
+        '(uri "${KIPRJMOD}/packetlogger.pretty")(options "")'
+        '(descr "Packet Logger carrier footprints"))\n)\n')
+    print('wrote %s (%d footprints) + fp-lib-table'%(lib,n))
+
 def write_pro(path):
     pro={"board":{"design_settings":{"defaults":{},
           "rules":{"min_clearance":0.2,"min_track_width":0.15,
@@ -150,3 +207,4 @@ if __name__=='__main__':
     os.makedirs('out',exist_ok=True)
     write('out/packet-logger-carrier.kicad_pcb')
     write_pro('out/packet-logger-carrier.kicad_pro')
+    write_library('out')

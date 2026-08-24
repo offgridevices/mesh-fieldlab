@@ -3,15 +3,16 @@ J1,4,RAK19003 header J6,1x4 2.54 female header
 J2,4,RAK19003 header J7,1x4 2.54 female header (OVAL SLOTS)
 J3,14,XIAO ESP32-C6,"2x7 2.54 female header, rows 15.24 apart"
 J4,6,microSD breakout,1x6 2.54 female header
-J5,5,Lid cable: OLED + button,1x5 2.54 male header
-J10,4,RAK spare I/O,1x4 2.54 male header
+J5,4,OLED display,1x4 2.54 male header
+J15,2,External button (parallel with SW1),1x2 2.54 male header
 J11,4,ESP spare I/O,1x4 2.54 male header
 SW1,4,User button,6 mm through-hole tact switch
 J12,2,Battery in (bare wires),1x2 2.54
 J13,2,Battery in (JST-PH 2.0),S2B-PH-K-S or solder wires
-SW2,3,Power switch,SS-12D00 slide switch or 2 wires to a panel switch
+SW2,3,Power switch,"SS-12D00 / SS12D00G6 slide switch, 3 pins on 2.54"
 J14,2,Switched battery out to RAK,1x2 2.54 + JST-PH pigtail
 JP1,2,3V3 link,1x2 header + shunt (or solder blob)
+J10,4,RAK spare I/O,1x4 2.54 male header
 C1,2,Bulk decoupling,"100 uF electrolytic, 2.54 lead pitch, OPTIONAL"
 C2,2,SD decoupling,"10 uF, 2.54 lead pitch, OPTIONAL"
 C3,2,SD decoupling,"100 nF, 2.54 lead pitch, OPTIONAL"

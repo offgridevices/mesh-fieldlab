@@ -1,0 +1,6 @@
+# KiCad local state and editor artifacts - not part of the design
+*.kicad_prl
+*.lck
+~*
+.history/
+fp-info-cache

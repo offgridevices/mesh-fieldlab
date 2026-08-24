@@ -4,7 +4,9 @@ import design as D, strokefont as SF
 
 def tbox(it):
     _,x,y,s,size,just,angle,layer,th = it
-    w = SF.width(s,size); h = size*1.25
+    # deliberately larger than our own stroke font, so this check is
+    # stricter than KiCad's renderer rather than looser
+    w = SF.width(s,size)+0.30; h = size*1.25+0.30
     if   just=='center': x0=-w/2
     elif just=='right':  x0=-w
     else:                x0=0.0
@@ -34,6 +36,24 @@ def run(verbose=True):
             o=ov(tbox(t), pbox(p))
             if o and o[0]>0.15 and o[1]>0.15:
                 hits.append(('TEXT/PAD','%r'%t[3],'%s.%s'%(p['ref'],p['pin']),round(o[0],2),round(o[1],2)))
+    lines=[it for it in D.silk if it[0]=='line']
+    for it in D.silk:
+        if it[0]=='disc':
+            _,dx,dy,dr,_l = it
+            for p in D.pads:
+                o=ov((dx-dr,dy-dr,dx+dr,dy+dr), pbox(p))
+                if o and o[0]>0.05 and o[1]>0.05:
+                    hits.append(('DISC/PAD','logo dot','%s.%s'%(p['ref'],p['pin']),
+                                 round(o[0],2),round(o[1],2)))
+    for t in texts:
+        tb=tbox(t)
+        for ln in lines:
+            _,x1,y1,x2,y2,w,lay = ln
+            lb=(min(x1,x2)-w/2, min(y1,y2)-w/2, max(x1,x2)+w/2, max(y1,y2)+w/2)
+            o=ov(tb,lb)
+            if o and o[0]>0.12 and o[1]>0.12:
+                hits.append(('TEXT/LINE','%r'%t[3],'seg %.1f,%.1f-%.1f,%.1f'%(x1,y1,x2,y2),
+                             round(o[0],2),round(o[1],2)))
     # text outside board
     for t in texts:
         b=tbox(t)

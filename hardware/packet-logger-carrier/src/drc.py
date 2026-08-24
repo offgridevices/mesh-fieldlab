@@ -5,7 +5,7 @@ import pickle, math, sys
 import numpy as np
 import design as D
 
-MIN_CLR   = 0.20     # absolute minimum copper-copper (we design to 0.25)
+MIN_CLR   = 0.25     # match the declared net-class clearance
 MIN_TRACE = 0.15
 MIN_ANN   = 0.15     # annular ring
 MIN_H2H   = 0.45     # hole edge to hole edge
@@ -240,41 +240,19 @@ def run():
             if not (seen[0][j,i] or seen[1][j,i]):
                 errs.append('NOT CONNECTED  net %s  pad %s.%s'%(net,p['ref'],p['pin']))
 
-    # ---- 5. GND pour
-    pour=np.zeros((NY,NX),bool)
-    rrect(pour,EDGE_CU,EDGE_CU,D.BW-EDGE_CU,D.BH-EDGE_CU)
-    block=np.zeros((NY,NX),bool)
-    for p in D.pads:
-        if p['net']=='GND': continue
-        paint_pad(block,p,POUR_CLR)
-    for (nt,l,x0,y0,x1,y1,w) in tracks:
-        if nt=='GND' or l!=1: continue
-        rstad(block,x0,y0,x1,y1,w/2+POUR_CLR)
-    for (nt,x,y) in vias:
-        if nt=='GND': continue
-        rdisc(block,x,y,D.VIA_D/2+POUR_CLR)
-    for (hx,hy,hd) in D.holes: rdisc(block,hx,hy,hd/2+POUR_CLR)
-    pour &= ~block
-    lab,ncomp=label(pour)
-    sizes=np.bincount(lab.ravel()); sizes[0]=0
-    main=int(np.argmax(sizes))
-    islands=[k for k in range(1,ncomp+1) if k!=main and sizes[k]>0]
-    isl_big=[k for k in islands if sizes[k]*GR*GR>1.0]
+    # ---- 5. GND pour  (the real one, thermal reliefs and all)
+    import pour as PR
+    pr = PR.build(tracks, vias)
     gpads=[p for p in D.pads if p['net']=='GND']
     for p in gpads:
-        i=int(round(p['x']/GR)); j=int(round(p['y']/GR))
-        r=int(round((max(p['w'],p['h'])/2+POUR_CLR+0.15)/GR))
-        ok=False
-        for jj in range(max(0,j-r),min(NY,j+r+1)):
-            for ii in range(max(0,i-r),min(NX,i+r+1)):
-                if lab[jj,ii]==main: ok=True; break
-            if ok: break
-        if not ok: errs.append('GND PAD NOT REACHED BY POUR: %s.%s'%(p['ref'],p['pin']))
-    if isl_big:
-        warns.append('pour has %d isolated island(s) >1mm2 (areas mm2: %s) - will be removed'
-                     %(len(isl_big), [round(sizes[k]*GR*GR,1) for k in isl_big]))
-
-    np.save('pour.npy', (lab==main))
+        m=np.zeros_like(pr); PR.paint_pad(m,p,0.02)
+        if not (m & pr).any():
+            errs.append('GND PAD NOT REACHED BY POUR: %s.%s'%(p['ref'],p['pin']))
+    lab,ncomp = PR.label4(pr)
+    if ncomp>1:
+        warns.append('pour is in %d pieces'%ncomp)
+    main=pr
+    np.save('pour.npy', pr)
     print('--- DRC ---')
     print('objects=%d tracks=%d vias=%d holes=%d'%(len(objs),len(tracks),len(vias),len(allholes)))
     for w in warns: print('WARN ', w)

@@ -7,14 +7,15 @@ FRIENDLY = {
  'J2':('RAK19003 header J7','1x4 2.54 female header (OVAL SLOTS)'),
  'J3':('XIAO ESP32-C6','2x7 2.54 female header, rows 15.24 apart'),
  'J4':('microSD breakout','1x6 2.54 female header'),
- 'J5':('Lid cable: OLED + button','1x5 2.54 male header'),
+ 'J5':('OLED display','1x4 2.54 male header'),
+ 'J15':('External button (parallel with SW1)','1x2 2.54 male header'),
  'J10':('RAK spare I/O','1x4 2.54 male header'),
  'J11':('ESP spare I/O','1x4 2.54 male header'),
  'J12':('Battery in (bare wires)','1x2 2.54'),
  'J13':('Battery in (JST-PH 2.0)','S2B-PH-K-S or solder wires'),
  'J14':('Switched battery out to RAK','1x2 2.54 + JST-PH pigtail'),
  'SW1':('User button','6 mm through-hole tact switch'),
- 'SW2':('Power switch','SS-12D00 slide switch or 2 wires to a panel switch'),
+ 'SW2':('Power switch','SS-12D00 / SS12D00G6 slide switch, 3 pins on 2.54'),
  'JP1':('3V3 link','1x2 header + shunt (or solder blob)'),
  'C1':('Bulk decoupling','100 uF electrolytic, 2.54 lead pitch, OPTIONAL'),
  'C2':('SD decoupling','10 uF, 2.54 lead pitch, OPTIONAL'),
@@ -27,9 +28,9 @@ for i,(nm,_) in enumerate(D.J7):  LBL[('J2',str(i+1))]='RAK J7 '+nm
 for i,nm in enumerate(D.XBOT):    LBL[('J3',str(i+1))]='XIAO '+nm
 for i,nm in enumerate(D.XTOP):    LBL[('J3',str(8+i))]='XIAO '+nm
 for i,(nm,_) in enumerate(D.SDPINS): LBL[('J4',str(i+1))]='SD '+nm
-for i,(nm,_) in enumerate(D.LIDP):   LBL[('J5',str(i+1))]='LID '+nm
-for i,(nm,_) in enumerate([('BOOT',0),('rSCL',0),('rSDA',0),('GND',0)]):
-    LBL[('J10',str(i+1))]='RAK '+nm
+for i,(nm,_) in enumerate(D.OLED):   LBL[('J5',str(i+1))]='OLED '+nm
+for i,nm in enumerate(['BTN','GND']): LBL[('J15',str(i+1))]='EXT BTN '+nm
+for i,(nm,_) in enumerate(D.RSP): LBL[('J10',str(i+1))]='RAK '+nm
 for i,nm in enumerate(['5V','D1','D2','GND']): LBL[('J11',str(i+1))]='XIAO '+nm
 
 def go(outdir):

@@ -80,7 +80,11 @@ def render(out='board.png', show_tracks=True, silkonly=False):
                    outline=(230,230,120), width=2)
     # silk
     for it in D.silk:
-        if it[0]=='line':
+        if it[0]=='disc':
+            _dx,_dy,_rr = it[1],it[2],it[3]*S
+            dr.ellipse([X(_dx)-_rr,Y(_dy)-_rr,X(_dx)+_rr,Y(_dy)+_rr],
+                       fill=(238,238,232,225))
+        elif it[0]=='line':
             _,x1,y1,x2,y2,w,layer = it
             dr.line([X(x1),Y(y1),X(x2),Y(y2)], fill=(238,238,232,225), width=max(1,int(w*S)))
         else:
