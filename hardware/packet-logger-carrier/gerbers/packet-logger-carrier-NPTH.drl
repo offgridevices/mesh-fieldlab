@@ -1,0 +1,17 @@
+M48
+;DRILL file {packet-logger-carrier} date 2026-08-24
+;FORMAT={-:-/ absolute / metric / decimal}
+FMAT,2
+METRIC,TZ
+;TYPE=NON_PLATED
+T1C3.200
+%
+G90
+G05
+T1
+X3.500Y3.500
+X82.500Y3.500
+X3.500Y54.500
+X82.500Y54.500
+T0
+M30

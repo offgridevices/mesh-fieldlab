@@ -1,0 +1,21 @@
+%FSLAX46Y46*%
+%MOMM*%
+%TF.GenerationSoftware,cairn,packet-logger-carrier,1.0*%
+%TF.CreationDate,2026-08-24T00:00:00*%
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
+%TF.SameCoordinates,Original*%
+G04 Packet Logger Carrier v1*
+G01*
+%LPD*%
+D10*
+%ADD10C,0.100000*%
+X0Y0D02*
+X86000000Y0D01*
+X86000000Y0D02*
+X86000000Y58000000D01*
+X86000000Y58000000D02*
+X0Y58000000D01*
+X0Y58000000D02*
+X0Y0D01*
+M02*
