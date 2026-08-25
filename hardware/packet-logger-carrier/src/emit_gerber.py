@@ -66,16 +66,15 @@ def pad_spec(p, grow=0.0):
 def emit(outdir):
     os.makedirs(outdir, exist_ok=True)
     d=pickle.load(open('routed.pkl','rb')); tracks,vias=d['tracks'],d['vias']
-    pr = PR.build(tracks,vias)
-    prects = PR.rects(pr)
+    ptop, pbot, _st = PR.build_both(tracks, vias)
+    prects = {0: PR.rects(ptop), 1: PR.rects(pbot)}
     files=[]
 
     # ---------------- copper
     for (layer, func, fn) in ((0,'Copper,L1,Top','F_Cu'),(1,'Copper,L2,Bot','B_Cu')):
         g=Gbr(func)
-        if layer==1:
-            for (x0,y0,x1,y1) in prects:
-                g.region([(x0,y0),(x1,y0),(x1,y1),(x0,y1)])
+        for (x0,y0,x1,y1) in prects[layer]:
+            g.region([(x0,y0),(x1,y0),(x1,y1),(x0,y1)])
         for (n,l,x0,y0,x1,y1,w) in tracks:
             if l!=layer: continue
             g.draw(('C',w),x0,y0,x1,y1)

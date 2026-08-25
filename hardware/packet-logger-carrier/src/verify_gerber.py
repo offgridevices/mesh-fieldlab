@@ -9,8 +9,7 @@ def blank(): return GR.Ras(D.BW,D.BH,RES)
 
 def model_copper(layer, tracks, vias, prects):
     r=blank()
-    if layer==1:
-        for (x0,y0,x1,y1) in prects: r.polygon([(x0,y0),(x1,y0),(x1,y1),(x0,y1)])
+    for (x0,y0,x1,y1) in prects[layer]: r.polygon([(x0,y0),(x1,y0),(x1,y1),(x0,y1)])
     for (n,l,x0,y0,x1,y1,w) in tracks:
         if l==layer: r.stad(x0,y0,x1,y1,w/2)
     for p in D.pads:
@@ -29,7 +28,8 @@ def model_copper(layer, tracks, vias, prects):
 
 def main():
     d=pickle.load(open('routed.pkl','rb')); tracks,vias=d['tracks'],d['vias']
-    prects=PR.rects(PR.build(tracks,vias))
+    _t,_b,_s = PR.build_both(tracks,vias)
+    prects={0: PR.rects(_t), 1: PR.rects(_b)}
     ok=True
     for (layer,fn) in ((0,'F_Cu'),(1,'B_Cu')):
         got=GR.parse('out/gerbers/packet-logger-carrier-%s.gbr'%fn, D.BW,D.BH,RES)

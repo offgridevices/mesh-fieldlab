@@ -249,16 +249,17 @@ def run():
 
     # ---- 5. GND pour  (the real one, thermal reliefs and all)
     import pour as PR
-    pr = PR.build(tracks, vias)
+    ptop, pbot, _st = PR.build_both(tracks, vias)
     gpads=[p for p in D.pads if p['net']=='GND']
-    for p in gpads:
-        m=np.zeros_like(pr); PR.paint_pad(m,p,0.02)
-        if not (m & pr).any():
-            errs.append('GND PAD NOT REACHED BY POUR: %s.%s'%(p['ref'],p['pin']))
-    lab,ncomp = PR.label4(pr)
-    if ncomp>1:
-        warns.append('pour is in %d pieces'%ncomp)
-    main=pr
+    for nm, pr in (('B.Cu', pbot), ('F.Cu', ptop)):
+        for p in gpads:
+            m=np.zeros_like(pr); PR.paint_pad(m,p,0.02)
+            if not (m & pr).any():
+                errs.append('GND PAD NOT REACHED BY %s POUR: %s.%s'%(nm,p['ref'],p['pin']))
+        lab,ncomp = PR.label4(pr)
+        if ncomp>1:
+            warns.append('%s pour is in %d pieces (each is grounded)'%(nm,ncomp))
+    pr = pbot
     np.save('pour.npy', pr)
     print('--- DRC ---')
     print('objects=%d tracks=%d vias=%d holes=%d'%(len(objs),len(tracks),len(vias),len(allholes)))

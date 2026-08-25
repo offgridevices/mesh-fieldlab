@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-"""B.Cu ground pour with thermal reliefs, as a raster + rectangle decomposition."""
+"""Ground fill for BOTH layers, with thermal reliefs, sliver removal, island
+handling and stitching vias tying the two planes together."""
 import math
 import numpy as np
 import design as D
 
 GR       = 0.05
-POUR_CLR = 0.35      # generated clearance (spec minimum is 0.20)
+POUR_CLR = 0.35      # generated clearance (design rule is 0.30)
 EDGE_CU  = 0.35
 TGAP     = 0.35      # thermal gap
 SPOKE    = 0.65      # thermal spoke width
-MIN_ISL  = 0.8       # mm^2 - drop islands smaller than this
+MIN_W    = 0.30      # remove copper slivers thinner than this
+MIN_ISL  = 3.0       # mm^2 - drop orphan islands smaller than this
+STITCH_R = D.VIA_D / 2 + 0.10
 
 NX = int(round(D.BW/GR))+1
 NY = int(round(D.BH/GR))+1
+
 
 def _disc(m,x,y,r,val=True):
     i0,i1=max(0,int((x-r)/GR)),min(NX-1,int(math.ceil((x+r)/GR)))
@@ -56,6 +60,29 @@ def paint_pad(m,p,grow=0.0,val=True):
 
 def pad_radius(p): return max(p['w'],p['h'])/2
 
+def _shift_and(m, k):
+    r = m.copy()
+    for _ in range(k):
+        s = r.copy()
+        s[1:,:] &= r[:-1,:]; s[:-1,:] &= r[1:,:]
+        s[:,1:] &= r[:,:-1]; s[:,:-1] &= r[:,1:]
+        r = s
+    return r
+
+def _shift_or(m, k):
+    r = m.copy()
+    for _ in range(k):
+        s = r.copy()
+        s[1:,:] |= r[:-1,:]; s[:-1,:] |= r[1:,:]
+        s[:,1:] |= r[:,:-1]; s[:,:-1] |= r[:,1:]
+        r = s
+    return r
+
+def _open(m, mm):
+    """morphological opening: deletes copper slivers narrower than mm"""
+    k = max(1, int(round((mm/2)/GR)))
+    return _shift_or(_shift_and(m, k), k)
+
 def label4(mask):
     from collections import deque
     NYl,NXl=mask.shape
@@ -73,56 +100,136 @@ def label4(mask):
                         lab[nj,ni]=cur; dq.append((nj,ni))
     return lab,cur
 
-def build(tracks, vias):
-    pour=np.zeros((NY,NX),bool)
-    _rect(pour,EDGE_CU,EDGE_CU,D.BW-EDGE_CU,D.BH-EDGE_CU)
-    # keep out foreign copper
+
+def _keepout(layer, tracks, vias):
+    """area where this layer's pour may NOT go"""
+    m=np.zeros((NY,NX),bool)
+    _rect(m,EDGE_CU,EDGE_CU,D.BW-EDGE_CU,D.BH-EDGE_CU)
+    m = ~m                                    # start: everything outside the board
     for p in D.pads:
         if p['net']=='GND': continue
-        paint_pad(pour,p,POUR_CLR,val=False)
+        paint_pad(m,p,POUR_CLR)
     for (n,l,x0,y0,x1,y1,w) in tracks:
-        if n=='GND' or l!=1: continue
-        _stad(pour,x0,y0,x1,y1,w/2+POUR_CLR,val=False)
+        if n=='GND' or l!=layer: continue
+        _stad(m,x0,y0,x1,y1,w/2+POUR_CLR)
     for (n,x,y) in vias:
         if n=='GND': continue
-        _disc(pour,x,y,D.VIA_D/2+POUR_CLR,val=False)
+        _disc(m,x,y,D.VIA_D/2+POUR_CLR)
     for (hx,hy,hd) in D.holes:
-        _disc(pour,hx,hy,hd/2+POUR_CLR,val=False)
-    # thermal reliefs on GND pads
+        _disc(m,hx,hy,hd/2+POUR_CLR)
+    if layer==0:
+        # Clear only the mark itself, not a box around it: a rectangular
+        # exclusion shows up as a panel of bare laminate under the mask. Let
+        # the fill hug the logo outline instead - that reads as intentional.
+        for it in getattr(D,'accent',[]):
+            if it[0]=='line': _stad(m,it[1],it[2],it[3],it[4],it[5]/2+POUR_CLR)
+            else:             _disc(m,it[1],it[2],it[3]+POUR_CLR)
+    return m
+
+
+def _thermals(pour, layer):
     gnd=[p for p in D.pads if p['net']=='GND']
     for p in gnd:
-        r=pad_radius(p)
-        _disc(pour,p['x'],p['y'],r+TGAP,val=False)
+        _disc(pour,p['x'],p['y'],pad_radius(p)+TGAP,val=False)
     spokes=np.zeros((NY,NX),bool)
     for p in gnd:
         r=pad_radius(p); reach=r+TGAP+0.30
         _rect(spokes,p['x']-reach,p['y']-SPOKE/2,p['x']+reach,p['y']+SPOKE/2)
         _rect(spokes,p['x']-SPOKE/2,p['y']-reach,p['x']+SPOKE/2,p['y']+reach)
-    # spokes must still respect foreign clearance / holes / edge
-    legal=np.zeros((NY,NX),bool)
-    _rect(legal,EDGE_CU,EDGE_CU,D.BW-EDGE_CU,D.BH-EDGE_CU)
-    for p in D.pads:
-        if p['net']=='GND': continue
-        paint_pad(legal,p,POUR_CLR,val=False)
-    for (n,l,x0,y0,x1,y1,w) in tracks:
-        if n=='GND' or l!=1: continue
-        _stad(legal,x0,y0,x1,y1,w/2+POUR_CLR,val=False)
-    for (n,x,y) in vias:
-        if n=='GND': continue
-        _disc(legal,x,y,D.VIA_D/2+POUR_CLR,val=False)
-    for (hx,hy,hd) in D.holes:
-        _disc(legal,hx,hy,hd/2+POUR_CLR,val=False)
+    return spokes
+
+
+def _raw(layer, tracks, vias):
+    """pour before island filtering"""
+    block=_keepout(layer, tracks, vias)
+    pour = ~block
+    legal = pour.copy()
+    for p in [q for q in D.pads if q['net']=='GND']:
+        _disc(pour,p['x'],p['y'],pad_radius(p)+TGAP,val=False)
+    spokes=np.zeros((NY,NX),bool)
+    for p in [q for q in D.pads if q['net']=='GND']:
+        r=pad_radius(p); reach=r+TGAP+0.30
+        _rect(spokes,p['x']-reach,p['y']-SPOKE/2,p['x']+reach,p['y']+SPOKE/2)
+        _rect(spokes,p['x']-SPOKE/2,p['y']-reach,p['x']+SPOKE/2,p['y']+reach)
     pour |= (spokes & legal)
-    # drop islands
-    lab,n=label4(pour)
-    if n:
-        sizes=np.bincount(lab.ravel()); sizes[0]=0
-        main=int(np.argmax(sizes))
-        for k in range(1,n+1):
-            if k!=main and sizes[k]*GR*GR < 1e9:   # keep only main
-                if k!=main: pour[lab==k]=False
-        pour = (lab==main)
-    return pour
+    return _open(pour, MIN_W)                 # kill slivers
+
+
+_CACHE = {}
+
+def build_both(tracks, vias):
+    key = (len(tracks), len(vias),
+           hash(tuple(sorted(map(repr, tracks)))), hash(tuple(sorted(map(repr, vias)))))
+    if key in _CACHE:
+        return _CACHE[key]
+    r = _build_both(tracks, vias)
+    _CACHE[key] = r
+    return r
+
+
+def _build_both(tracks, vias):
+    """Ground fill on BOTH layers.
+
+    Returns (top, bottom, stitch_vias). An island that reaches no GND pad is
+    floating copper - it is either anchored with a stitching via down to the
+    other plane, or removed. A stitch point must have room on BOTH layers,
+    otherwise the via would connect to nothing.
+    """
+    top = _raw(0, tracks, vias)
+    bot = _raw(1, tracks, vias)
+    gnd_pads = [q for q in D.pads if q['net']=='GND']
+    gmask = np.zeros((NY,NX),bool)
+    for q in gnd_pads: paint_pad(gmask, q, 0.02)
+
+    k = max(1, int(round(STITCH_R/GR)))
+    room_top = _shift_and(top, k)
+    room_bot = _shift_and(bot, k)
+    both = room_top & room_bot
+
+    stitches=[]
+    keep={}
+    for layer, m in ((0, top), (1, bot)):
+        lab,n = label4(m)
+        out = np.zeros_like(m)
+        for c in range(1, n+1):
+            comp = (lab==c)
+            if (comp & gmask).any():
+                out |= comp                     # already grounded
+                continue
+            if comp.sum()*GR*GR < MIN_ISL:
+                continue                        # too small to bother, drop it
+            cand = comp & both
+            ys,xs = np.nonzero(cand)
+            if len(xs)==0:
+                continue                        # nowhere safe to stitch - drop
+            cx, cy = xs.mean(), ys.mean()
+            i = int(np.argmin((xs-cx)**2 + (ys-cy)**2))
+            pt = (round(float(xs[i])*GR,2), round(float(ys[i])*GR,2))
+            stitches.append(('GND', pt[0], pt[1]))
+            out |= comp
+        keep[layer] = out
+
+    # a stitch via lands in both planes, so it also grounds the island it sits
+    # in on the opposite layer - fold that in
+    for (_n, sx, sy) in stitches:
+        sm = np.zeros((NY,NX),bool); _disc(sm, sx, sy, D.VIA_D/2)
+        for layer, m in ((0, top), (1, bot)):
+            lab,n = label4(m)
+            hit = set(lab[sm & m].tolist()) - {0}
+            for c in hit:
+                keep[layer] |= (lab==c)
+    return keep[0], keep[1], stitches
+
+
+def build_layer(layer, tracks, vias, stitch=True):
+    t,b,s = build_both(tracks, vias)
+    return (t if layer==0 else b), s
+
+
+def build(tracks, vias):
+    """bottom pour only - kept for callers that just want B.Cu"""
+    return build_both(tracks, vias)[1]
+
 
 def rects(pour):
     """greedy decomposition of the raster into axis-aligned rectangles (mm)"""

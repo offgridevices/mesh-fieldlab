@@ -28,6 +28,10 @@ def run():
     import teardrops
     td, rebuilt = teardrops.build(rt.tracks, D.pads, frac=0.70, extra=0.75)
     rt.tracks = rebuilt + td
+    import pour as PR
+    _t, _b, stitches = PR.build_both(rt.tracks, rt.vias)
+    rt.vias += stitches          # anchor floating pour islands to the other plane
+    if stitches: print('  + %d stitching vias tying the two ground planes'%len(stitches))
     print('tracks=%d (+%d teardrop segs) vias=%d fails=%s'
           % (len(rt.tracks), len(td), len(rt.vias), fails))
     return rt, fails

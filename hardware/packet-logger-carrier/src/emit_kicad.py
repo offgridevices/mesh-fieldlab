@@ -157,13 +157,17 @@ def write(path):
     import pour as PR
     e=PR.EDGE_CU
     zp=[(e,e),(D.BW-e,e),(D.BW-e,D.BH-e),(e,D.BH-e)]
-    o.append('  (zone (net %d) (net_name "GND") (layers "B.Cu") (uuid "%s") (name "GND")'%(nid['GND'],U()))
-    o.append('    (hatch edge 0.5)')
-    o.append('    (connect_pads (clearance %s))'%PR.POUR_CLR)
-    o.append('    (min_thickness 0.25) (filled_areas_thickness no)')
-    o.append('    (fill yes (thermal_gap %s) (thermal_bridge_width %s))'%(PR.TGAP,PR.SPOKE))
-    o.append('    (polygon (pts %s))'%' '.join('(xy %s %s)'%(KX(a),KY(b)) for (a,b) in zp))
-    o.append('  )')
+    for lay in ('F.Cu','B.Cu'):
+        o.append('  (zone (net %d) (net_name "GND") (layers "%s") (uuid "%s") (name "GND-%s")'
+                 %(nid['GND'], lay, U(), lay.replace('.','')))
+        o.append('    (hatch edge 0.5)')
+        o.append('    (connect_pads (clearance %s))'%PR.POUR_CLR)
+        o.append('    (min_thickness %s) (filled_areas_thickness no)'%PR.MIN_W)
+        o.append('    (fill yes (thermal_gap %s) (thermal_bridge_width %s) '
+                 '(island_removal_mode 0))'
+                 %(PR.TGAP, PR.SPOKE))
+        o.append('    (polygon (pts %s))'%' '.join('(xy %s %s)'%(KX(a),KY(b)) for (a,b) in zp))
+        o.append('  )')
     o.append(')')
     open(path,'w').write('\n'.join(o)+'\n')
     print('wrote', path, os.path.getsize(path), 'bytes;', len(tracks),'segments,',len(vias),'vias')
