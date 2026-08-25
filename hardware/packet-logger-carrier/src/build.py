@@ -25,7 +25,11 @@ def run():
         print('%-10s %-5s vias=%d  %.1fs  %s' % (n, 'OK' if ok else 'FAIL', nv,
                                                  time.time()-t0, ''))
         if not ok: fails.append(n)
-    print('tracks=%d vias=%d fails=%s' % (len(rt.tracks), len(rt.vias), fails))
+    import teardrops
+    td, rebuilt = teardrops.build(rt.tracks, D.pads, frac=0.70, extra=0.75)
+    rt.tracks = rebuilt + td
+    print('tracks=%d (+%d teardrop segs) vias=%d fails=%s'
+          % (len(rt.tracks), len(td), len(rt.vias), fails))
     return rt, fails
 
 if __name__=='__main__':

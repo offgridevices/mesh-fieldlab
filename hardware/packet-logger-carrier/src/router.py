@@ -131,6 +131,9 @@ class Router:
         if len(tps) < 2: return True, 0
         blk  = self.build(net, tw)
         blkv = self.build(net, tw, half=D.VIA_D/2.0)
+        # cells that satisfy the rule but sit in the tight band near foreign
+        # copper: legal, just discouraged, so traces drift to the middle of gaps
+        tight = self.build(net, tw, half=tw/2.0 + 0.22) & ~blk
         # seed set = pad 0 ; then connect each remaining pad to the tree
         def pad_cells(p):
             """Arrival is the pad CENTRE only.  Letting the router stop anywhere
@@ -187,7 +190,7 @@ class Router:
             goal = pad_cells(p)
             if tree & goal:
                 tree |= goal; continue
-            path = self._astar(blk, tree, goal, prefer_top, allow_via, blkv)
+            path = self._astar(blk, tree, goal, prefer_top, allow_via, blkv, tight)
             if path is None:
                 return False, nvia
             # emit
@@ -200,9 +203,10 @@ class Router:
             # re-block against ourselves for next terminal? same net -> no
             blk  = self.build(net, tw)
             blkv = self.build(net, tw, half=D.VIA_D/2.0)
+            tight = self.build(net, tw, half=tw/2.0 + 0.22) & ~blk
         return True, nvia
 
-    def _astar(self, blk, starts, goals, prefer_top, allow_via, blkv=None):
+    def _astar(self, blk, starts, goals, prefer_top, allow_via, blkv=None, tight=None):
         gset = goals
         # goal centroid for heuristic
         gs = list(gset)
@@ -220,6 +224,7 @@ class Router:
         VIA_COST   = 55.0
         TURN_COST  = 1.2
         BOT_COST   = 0.35      # discourage eating the ground plane
+        TIGHT_COST = 2.5       # prefer the middle of a gap to its edge
         while pq:
             f,g,(l,i,j),pdir = heapq.heappop(pq)
             if g > dist.get((l,i,j),INF)+1e-9: continue
@@ -230,6 +235,7 @@ class Router:
                 if not (0<=ni<NX and 0<=nj<NY): continue
                 if blk[l,nj,ni]: continue
                 c = 1.0 + (BOT_COST if l==1 else 0.0)
+                if tight is not None and tight[l,nj,ni]: c += TIGHT_COST
                 if pdir is not None and pdir!=(di,dj): c += TURN_COST
                 ng = g + c
                 key=(l,ni,nj)

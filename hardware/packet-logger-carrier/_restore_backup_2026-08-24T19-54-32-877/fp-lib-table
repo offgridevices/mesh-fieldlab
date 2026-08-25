@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "packetlogger")(type "KiCad")(uri "${KIPRJMOD}/packetlogger.pretty")(options "")(descr "Packet Logger carrier footprints"))
+)
