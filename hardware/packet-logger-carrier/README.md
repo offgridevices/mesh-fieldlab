@@ -294,8 +294,13 @@ kicad-drc.json                       KiCad's own DRC report
 fab_top.png / fab_bottom.png         rendered from the Gerbers
 render3d_top.png / render3d_bottom.png   KiCad's 3D render, real colours
 board.png                            routing view (top = red, bottom = blue)
+mechanical/                          STEP models + sizes for enclosure design
 src/                                 the generator and every verification script
 ```
+
+For an enclosure, start at `mechanical/README.md`. It has the STEP files, the
+overall envelope, the M3 pattern and which face each connector needs an
+opening on.
 
 To open: `File → Open`, pick `packet-logger-carrier.kicad_pcb`. The ground
 pour is already filled, so it looks right immediately.
