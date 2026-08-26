@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import RX_NODE, TX_NODE, make_file, row
+from conftest import BOOT_RADIO_DEFAULTS, RX_NODE, TX_NODE, make_file, row
 from fieldlab import schema as S
 from fieldlab.validate import validate_file, validate_text
 
@@ -268,6 +268,7 @@ def _boot_with(**extra) -> str:
     pairs = {
         "fw": "2.5.4", "preset": "LONG_FAST", "boot": "1",
         "lat": "39.8283", "lon": "-98.5795", "alt": "0", "ant": "stock",
+        **BOOT_RADIO_DEFAULTS,
     }
     pairs.update({k: str(v) for k, v in extra.items()})
     return row(S.ROW_BOOT, extra=S.format_extra(pairs))
@@ -478,3 +479,84 @@ def test_a_clean_run_carries_none_of_the_recovery_warnings(good_file):
     assert result.issues == []
     assert result.summary.recoveries == []
     assert result.summary.rows_dropped == 0
+
+
+# ---------------------------------------------------------------------------
+# Schema v4, and the promise that v3 files keep reading
+# ---------------------------------------------------------------------------
+
+
+def test_a_file_written_under_the_old_schema_still_reads():
+    """The bench captures that exist are v3. Dropping them to tidy a constant
+    would destroy the only recordings anybody has actually made."""
+    text = make_file(
+        row(S.ROW_BOOT, version=3, uptime_ms=100, dev_rx_time=1786000000),
+        row(S.ROW_PKT, version=3, uptime_ms=5000, dev_rx_time=1786000005),
+        row(S.ROW_NODE, version=3, uptime_ms=6000, dev_rx_time=1786000006),
+        version=3,
+    )
+    result = validate_text(text)
+    assert result.ok, [i.message for i in result.errors]
+    assert result.summary.schema_versions == {3}
+
+
+def test_the_header_decides_which_layout_a_file_is_read_under():
+    """A v3 file read against v4 columns misaligns everything after tx_node and
+    still parses, which is the quietest possible way to get a wrong answer."""
+    v3 = make_file(row(S.ROW_BOOT, version=3), row(S.ROW_PKT, version=3), version=3)
+    v4 = make_file(row(S.ROW_BOOT), row(S.ROW_PKT))
+    assert validate_text(v3).ok
+    assert validate_text(v4).ok
+    assert "COLUMN_COUNT" not in error_codes(validate_text(v3))
+
+
+def test_a_row_claiming_a_different_version_than_its_header_is_an_error():
+    text = make_file(row(S.ROW_BOOT), row(S.ROW_PKT, schema_ver=3))
+    assert "SCHEMA_VERSION_MIXED" in error_codes(validate_text(text))
+
+
+def test_a_header_matching_no_known_schema_is_rejected():
+    result = validate_text(make_file(row(S.ROW_BOOT), header="a,b,c"))
+    assert "HEADER" in error_codes(result)
+
+
+def test_a_reading_the_radio_did_not_supply_is_accepted_as_empty():
+    """Absence is written empty, not as zero. A quiet channel and a radio that
+    did not answer are different facts and must stay different."""
+    from conftest import NODE_EXTRA_NO_METRICS
+
+    text = make_file(row(S.ROW_BOOT), row(S.ROW_NODE, extra=NODE_EXTRA_NO_METRICS))
+    result = validate_text(text)
+    assert result.ok, [i.message for i in result.errors]
+    assert "EXTRA_MISSING" not in error_codes(result)
+
+
+def test_an_impossible_channel_utilisation_is_caught_on_the_card():
+    extra = S.format_extra({
+        "name": "N2", "lat": "39.8", "lon": "-98.5", "batt": "88",
+        "last_heard": "1786000000", "pos_time": "1786000000",
+        "chan_util": "410.0", "air_tx": "2.0", "volt": "4.0",
+    })
+    text = make_file(row(S.ROW_BOOT), row(S.ROW_NODE, extra=extra))
+    assert "EXTRA_RANGE" in error_codes(validate_text(text))
+
+
+def test_a_nan_reaching_the_extra_column_is_an_error_not_a_number():
+    """The firmware writes empty for an absent reading precisely so that "nan"
+    never reaches the file. If one does, it is a bug, not a measurement."""
+    extra = S.format_extra({
+        "name": "N2", "lat": "39.8", "lon": "-98.5", "batt": "88",
+        "last_heard": "1786000000", "pos_time": "1786000000",
+        "chan_util": "nan", "air_tx": "2.0", "volt": "4.0",
+    })
+    text = make_file(row(S.ROW_BOOT), row(S.ROW_NODE, extra=extra))
+    assert "EXTRA_NOT_A_NUMBER" in error_codes(validate_text(text))
+
+
+def test_a_boot_row_without_the_radio_settings_is_incomplete():
+    """A v4 file naming a preset but not what it stands for cannot say how the
+    radio was configured, which is the gap v4 exists to close."""
+    from conftest import BOOT_EXTRA_V3
+
+    text = make_file(row(S.ROW_BOOT, extra=BOOT_EXTRA_V3), row(S.ROW_PKT))
+    assert "EXTRA_MISSING" in error_codes(validate_text(text))

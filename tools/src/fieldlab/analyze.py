@@ -19,6 +19,11 @@ wrong bias.
 **Medians, not means.** Signal strength is skewed and a single multipath null
 drags an average somewhere no reading ever was.
 
+Signal strength answers whether a link exists. It cannot answer what the link
+cost, because a channel that is quiet and a channel that is saturated produce
+the same RSSI. That question is answered by the radio's own channel
+utilisation, carried on NODE rows from v4 onward and summarised here.
+
 Like the checker, this depends on nothing outside the standard library, so it
 runs on whatever laptop is in the field.
 """
@@ -57,6 +62,40 @@ class Reception:
 
 
 @dataclass
+class ChannelLoad:
+    """What one node's radio said the shared channel was costing.
+
+    Reported by the radio itself, so it counts every transmission it can hear —
+    including the traffic of anyone else on the frequency, which no per-packet
+    record of our own mesh could ever see.
+    """
+
+    node: int
+    #: Percent of wall-clock time the channel was busy, as sampled per report.
+    utilisation: list[float] = field(default_factory=list)
+    #: Percent of the last hour this node spent transmitting.
+    air_tx: list[float] = field(default_factory=list)
+    #: Reports that arrived with no metrics block at all.
+    reports: int = 0
+    absent: int = 0
+
+    def _mid(self, values: list[float]) -> float | None:
+        return median(values) if values else None
+
+    @property
+    def median_utilisation(self) -> float | None:
+        return self._mid(self.utilisation)
+
+    @property
+    def peak_utilisation(self) -> float | None:
+        return max(self.utilisation) if self.utilisation else None
+
+    @property
+    def median_air_tx(self) -> float | None:
+        return self._mid(self.air_tx)
+
+
+@dataclass
 class NodeInfo:
     """What a node's BOOT row said about itself."""
 
@@ -71,6 +110,15 @@ class NodeInfo:
     boot: str = ""
     antenna: str = ""
     source: str = ""
+    #: v4 onward. Empty on a v3 file, which recorded only the preset name.
+    #: `use_preset` is the one that decides whether `preset` means anything:
+    #: with it "0" the radio was on the explicit sf/bw/cr below instead.
+    use_preset: str = ""
+    tx_power: str = ""
+    bandwidth: str = ""
+    spread_factor: str = ""
+    coding_rate: str = ""
+    channel_num: str = ""
 
     @property
     def has_position(self) -> bool:
@@ -107,11 +155,23 @@ class Session:
     #: (path, why) for files that were not usable
     skipped: list[tuple[str, str]] = field(default_factory=list)
     duplicates_dropped: int = 0
+    channel: dict[int, ChannelLoad] = field(default_factory=dict)
 
     def config_mismatches(self) -> list[str]:
         """Nodes configured differently cannot be compared, however clean the data."""
         problems = []
-        for label, attr in (("preset", "preset"), ("region", "region"), ("hop limit", "hops")):
+        checks = (
+            ("preset", "preset"), ("region", "region"), ("hop limit", "hops"),
+            # v4. Two nodes can agree on a preset name and still be on
+            # different radios: with use_preset off the name is a leftover, and
+            # transmit power is never implied by a preset at all. A link matrix
+            # built across a 10 dB power difference looks asymmetric for a
+            # reason that has nothing to do with terrain.
+            ("transmit power", "tx_power"), ("bandwidth", "bandwidth"),
+            ("spreading factor", "spread_factor"), ("coding rate", "coding_rate"),
+            ("frequency slot", "channel_num"), ("use-preset flag", "use_preset"),
+        )
+        for label, attr in checks:
             values = {getattr(n, attr) for n in self.nodes.values() if getattr(n, attr)}
             if len(values) > 1:
                 listed = ", ".join(sorted(values))
@@ -157,15 +217,24 @@ def load_file(path: Path | str, session: Session, *, force: bool = False) -> Non
         header = next(reader, None)
         if header is None:
             return
+
+        # Read the file under the layout its own header declares. A v3 file
+        # read against v4 names would misalign every column after tx_node and
+        # still produce rows that parse, which is the quietest way to get a
+        # wrong answer out of a right file.
+        names = S.column_names_for(S.version_for_header([f.strip() for f in header]) or S.SCHEMA_VERSION)
+
         for raw in reader:
-            if len(raw) != len(S.COLUMN_NAMES):
+            if len(raw) != len(names):
                 continue  # the checker has already reported this
-            row = dict(zip(S.COLUMN_NAMES, (v.strip() for v in raw)))
+            row = dict(zip(names, (v.strip() for v in raw)))
 
             if row["row_type"] == S.ROW_BOOT:
                 _read_boot(row, session, str(path))
             elif row["row_type"] == S.ROW_PKT:
                 _read_packet(row, session, seen)
+            elif row["row_type"] == S.ROW_NODE:
+                _read_node(row, session)
 
 
 def _read_boot(row: dict[str, str], session: Session, source: str) -> None:
@@ -193,7 +262,55 @@ def _read_boot(row: dict[str, str], session: Session, source: str) -> None:
         boot=extra.get("boot", ""),
         antenna=extra.get("ant", ""),
         source=source,
+        use_preset=extra.get("usepreset", ""),
+        tx_power=extra.get("txpwr", ""),
+        bandwidth=extra.get("bw", ""),
+        spread_factor=extra.get("sf", ""),
+        coding_rate=extra.get("cr", ""),
+        channel_num=extra.get("chan", ""),
     )
+
+
+def _read_node(row: dict[str, str], session: Session) -> None:
+    """Take the channel figures off one node report.
+
+    Recorded against the node that *reported* them, not the node the row
+    describes. Utilisation is a property of a place — what one radio could hear
+    where it stood — so attributing a neighbour's copy of the number to that
+    neighbour would count the same measurement several times over and average
+    away the differences between positions, which are the whole point.
+    """
+    try:
+        reporter = int(row["rx_node"])
+    except ValueError:
+        return
+
+    extra = S.parse_extra(row["extra"])
+    load = session.channel.get(reporter)
+    if load is None:
+        load = session.channel[reporter] = ChannelLoad(node=reporter)
+
+    # Only the reporter's own row carries its own radio's figures; the rows it
+    # writes about its neighbours repeat what those neighbours last advertised,
+    # which is a different measurement taken somewhere else.
+    if row["tx_node"] != row["rx_node"]:
+        return
+
+    load.reports += 1
+    got = False
+    for key, target in (("chan_util", load.utilisation), ("air_tx", load.air_tx)):
+        raw = extra.get(key, S.ABSENT)
+        if raw == S.ABSENT:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if math.isfinite(value):
+            target.append(value)
+            got = True
+    if not got:
+        load.absent += 1
 
 
 def _read_packet(row: dict[str, str], session: Session, seen: set) -> None:

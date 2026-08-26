@@ -26,6 +26,26 @@ struct Result {
   bool     fixed_position = false;
   bool     tx_enabled     = false;
 
+  // What the preset name actually stands for.
+  //
+  // A preset is a shorthand for a bandwidth, a spreading factor and a coding
+  // rate, and every one of those decides both sensitivity and time on air. The
+  // shorthand is only binding while use_preset is true: with it false the radio
+  // is on whatever the three fields below say, and the preset name it still
+  // reports is a leftover. A file that recorded only the name would then be
+  // describing a configuration the radio was not using, with nothing in it to
+  // contradict the claim.
+  //
+  // tx_power matters for a different reason: every RSSI reading in the file is
+  // relative to it, and two nodes at different powers produce a link matrix
+  // that looks asymmetric for a reason that has nothing to do with terrain.
+  bool     use_preset     = false;
+  int8_t   tx_power       = 0;
+  uint32_t bandwidth      = 0;   // kHz
+  uint8_t  spread_factor  = 0;
+  uint8_t  coding_rate    = 0;
+  uint32_t channel_num    = 0;   // frequency slot
+
   bool     clock_set      = false;
   bool     clock_waited   = false;   // did the boot have to stop and wait?
   uint32_t clock_wait_ms  = 0;       // and for how long, whether or not it came

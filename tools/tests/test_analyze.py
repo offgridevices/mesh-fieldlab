@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import RX_NODE, TX_NODE, make_file, row
+from conftest import BOOT_RADIO_DEFAULTS, RX_NODE, TX_NODE, make_file, row
 from fieldlab import schema as S
 from fieldlab.analyze import (
     NodeInfo,
@@ -32,6 +32,7 @@ def boot(node=RX_NODE, **extra) -> str:
         "fw": "0.1.0", "preset": "LONG_FAST", "boot": "1",
         "lat": "39.8283", "lon": "-98.5795", "alt": "0", "ant": "stock",
         "region": "US", "hops": "3",
+        **BOOT_RADIO_DEFAULTS,
     }
     pairs.update({k: str(v) for k, v in extra.items()})
     return row(S.ROW_BOOT, rx_node=node, extra=S.format_extra(pairs))
@@ -223,3 +224,96 @@ def test_an_empty_directory_is_an_empty_session(tmp_path):
     session = load_directory(tmp_path)
     assert session.files == []
     assert link_stats(session) == []
+
+
+# ---------------------------------------------------------------------------
+# Channel load — what the link cost, which signal strength cannot say
+# ---------------------------------------------------------------------------
+
+
+def node_row(reporter, subject, **extra) -> str:
+    pairs = {
+        "name": "N2", "lat": "39.8290", "lon": "-98.5780", "batt": "88",
+        "last_heard": "1786000000", "pos_time": "1786000000",
+        "chan_util": "9.5", "air_tx": "2.4", "volt": "4.01",
+    }
+    pairs.update({k: str(v) for k, v in extra.items()})
+    return row(S.ROW_NODE, rx_node=reporter, tx_node=subject, extra=S.format_extra(pairs))
+
+
+def test_channel_load_is_attributed_to_the_node_that_reported_it(tmp_path):
+    """Utilisation is a property of a place. A node's rows about its neighbours
+    repeat what those neighbours advertised from where *they* stood, so
+    crediting them to the neighbour counts one measurement several times and
+    averages away the differences between positions the session exists to find.
+    """
+    text = make_file(
+        boot(),
+        node_row(RX_NODE, RX_NODE, chan_util="12.0"),   # this radio, here
+        node_row(RX_NODE, TX_NODE, chan_util="90.0"),   # hearsay about a neighbour
+    )
+    session = Session()
+    load_file(write(tmp_path, "LOG_N1_1.csv", text), session)
+
+    assert set(session.channel) == {RX_NODE}
+    assert session.channel[RX_NODE].median_utilisation == 12.0
+
+
+def test_a_report_without_metrics_is_excluded_rather_than_counted_as_zero(tmp_path):
+    text = make_file(
+        boot(),
+        node_row(RX_NODE, RX_NODE, chan_util="10.0", air_tx="2.0"),
+        node_row(RX_NODE, RX_NODE, chan_util=S.ABSENT, air_tx=S.ABSENT, volt=S.ABSENT),
+    )
+    session = Session()
+    load_file(write(tmp_path, "LOG_N1_1.csv", text), session)
+
+    load = session.channel[RX_NODE]
+    assert load.reports == 2
+    assert load.absent == 1
+    # Two reports, one reading. Averaging the absence in as a zero would halve it.
+    assert load.median_utilisation == 10.0
+
+
+def test_peak_utilisation_is_kept_alongside_the_median(tmp_path):
+    text = make_file(
+        boot(),
+        *[node_row(RX_NODE, RX_NODE, chan_util=v) for v in ("8.0", "9.0", "41.0")],
+    )
+    session = Session()
+    load_file(write(tmp_path, "LOG_N1_1.csv", text), session)
+
+    load = session.channel[RX_NODE]
+    assert load.median_utilisation == 9.0
+    # The median hides the congestion; the peak is what says the radio was
+    # throttling itself while these links were measured.
+    assert load.peak_utilisation == 41.0
+
+
+def test_nodes_on_different_transmit_power_are_not_comparable(tmp_path):
+    """Two radios can agree on every preset name and still be incomparable.
+    Nothing recorded transmit power before v4, so this could not be caught."""
+    session = Session()
+    load_file(write(tmp_path, "LOG_N1_1.csv", make_file(boot(node=RX_NODE, txpwr=30))), session)
+    load_file(write(tmp_path, "LOG_N2_1.csv", make_file(boot(node=TX_NODE, txpwr=17))), session)
+
+    problems = session.config_mismatches()
+    assert any("transmit power" in p for p in problems), problems
+
+
+def test_an_old_file_analyses_with_no_channel_figures(tmp_path):
+    """v3 recorded no utilisation. The analysis must say so rather than invent
+    a zero, and must not fall over on the missing columns."""
+    text = make_file(
+        row(S.ROW_BOOT, version=3, rx_node=RX_NODE),
+        row(S.ROW_PKT, version=3, rx_node=RX_NODE, tx_node=TX_NODE,
+            pkt_id=99, rx_rssi_dbm=-80, rx_snr_db=5.0,
+            hop_start=3, hop_limit=3, hops_used=0),
+        version=3,
+    )
+    session = Session()
+    load_file(write(tmp_path, "LOG_N1_1.csv", text), session)
+
+    assert session.channel == {}
+    assert len(session.receptions) == 1
+    assert session.nodes[RX_NODE].tx_power == ""

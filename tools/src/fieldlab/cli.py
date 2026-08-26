@@ -191,7 +191,17 @@ def analyze_main(argv: list[str] | None = None) -> int:
                 "name": n.name, "lat": n.lat, "lon": n.lon, "alt": n.alt,
                 "preset": n.preset, "region": n.region, "boot": n.boot,
                 "antenna": n.antenna,
+                "use_preset": n.use_preset, "tx_power": n.tx_power,
+                "bandwidth": n.bandwidth, "spread_factor": n.spread_factor,
+                "coding_rate": n.coding_rate, "channel_num": n.channel_num,
             } for n in session.nodes.values()},
+            "channel": {str(node): {
+                "reports": load.reports,
+                "reports_without_metrics": load.absent,
+                "utilisation_median": load.median_utilisation,
+                "utilisation_peak": load.peak_utilisation,
+                "air_tx_median": load.median_air_tx,
+            } for node, load in sorted(session.channel.items())},
             "config_mismatches": session.config_mismatches(),
             "duplicates_dropped": session.duplicates_dropped,
             "links": [{
@@ -237,6 +247,38 @@ def analyze_main(argv: list[str] | None = None) -> int:
         print(f"  {s.tx:>10} {s.rx:>10} {s.packets:>5} "
               f"{s.rssi_median:>6.0f}  {s.rssi_p10:>5.0f}..{s.rssi_p90:<5.0f} "
               f"{s.snr_median:>5.1f} {share} {distance}{thin}")
+
+    if session.channel:
+        measured = [l for l in session.channel.values() if l.utilisation]
+        print("\nCHANNEL LOAD  (what each radio said the shared channel cost)")
+        print(f"  {'node':>10} {'reports':>8} {'busy med':>9} {'busy peak':>10} {'own TX':>8}")
+        for node, load in sorted(session.channel.items()):
+            if not load.utilisation:
+                print(f"  {node:>10} {load.reports:>8} {'--':>9} {'--':>10} {'--':>8}"
+                      "   no radio metrics in any report")
+                continue
+            air = f"{load.median_air_tx:7.1f}%" if load.median_air_tx is not None else "      --"
+            print(f"  {node:>10} {load.reports:>8} {load.median_utilisation:8.1f}% "
+                  f"{load.peak_utilisation:9.1f}% {air}")
+
+        blank = sum(l.absent for l in session.channel.values())
+        if blank:
+            print(f"  {blank} reports carried no metrics block and are excluded, "
+                  "not counted as zero.")
+
+        if measured:
+            worst = max(l.peak_utilisation for l in measured)
+            # Above roughly a quarter of the channel, Meshtastic's own governor
+            # starts holding back non-critical traffic, so what a session
+            # measures past that point is the governor rather than the path.
+            if worst >= 25:
+                print(f"  WARNING  peak utilisation reached {worst:.0f}%. Above about 25% the "
+                      "radio\n           throttles its own traffic, so these links were "
+                      "measured under\n           congestion rather than under the load you set.")
+    elif session.files:
+        print("\nNo channel-load figures. These arrive on NODE rows from schema v4 "
+              "onward;\nolder files did not record what the radio believed the "
+              "channel was costing.")
 
     pairs = asymmetry(links)
     if pairs:

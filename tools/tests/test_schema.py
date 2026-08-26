@@ -158,3 +158,64 @@ def test_packet_only_columns_are_the_ones_that_describe_a_reception():
     # tx_node is not packet-only: NODE rows use it to name their subject.
     assert "tx_node" not in S.PACKET_ONLY
     assert "rx_node" not in S.PACKET_ONLY
+
+
+def _c_string(text: str, name: str, _depth: int = 0) -> str:
+    """The concatenated literal a string-valued C macro expands to.
+
+    Resolves references to other string macros, because the firmware builds one
+    of these out of another — which is the point of it, and would make a test
+    that only read the outermost literal quietly measure nothing.
+    """
+    assert _depth < 8, f"{name} expands into itself"
+    body = _c_macro(text, name)
+    out = []
+    for token in re.finditer(r'"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*)', body):
+        literal, ident = token.group(1), token.group(2)
+        if literal is not None:
+            out.append(literal)
+        elif ident:
+            out.append(_c_string(text, ident, _depth + 1))
+    return "".join(out)
+
+
+@pytest.mark.parametrize(
+    "macro,first_column",
+    [
+        # Every non-packet row zeroes the packet columns. BOOT and STATUS zero
+        # the run starting at tx_node; NODE carries its subject there, so its
+        # run starts one column later.
+        ("NO_PKT_COLS", "tx_node"),
+        ("NO_PKT_AFTER_TX", "to_node"),
+    ],
+)
+def test_the_firmware_zero_fill_covers_exactly_the_packet_columns(macro, first_column):
+    """A row short by one column is rejected outright, which is survivable.
+
+    A row with the right column count and the zeroes in the wrong places is
+    not: it parses, every value after the mistake is read as the column beside
+    it, and nothing downstream can tell. That failure would first appear on a
+    card at the end of a field day, so it is worth pinning here.
+    """
+    if not FIRMWARE_SCHEMA.exists():
+        pytest.skip("firmware not present")
+
+    fill = _c_string(FIRMWARE_SCHEMA.read_text(), macro)
+    assert fill, f"{macro} not found in the firmware header"
+    assert fill.endswith(","), f"{macro} must end in a comma; row_type follows it"
+
+    fields = fill.split(",")[:-1]
+    start = S.COLUMN_INDEX[first_column]
+    # row_type and extra close every row and are written by the caller.
+    covered = S.COLUMN_NAMES[start:-2]
+    assert len(fields) == len(covered), (
+        f"{macro} writes {len(fields)} columns but {len(covered)} lie between "
+        f"{first_column} and row_type"
+    )
+
+    # The float has to land on the float column. Everything else is an integer
+    # zero, and swapping two of those is invisible; swapping the float for one
+    # is the one case a reader could notice, so it is the one worth asserting.
+    for name, written in zip(covered, fields):
+        expected = "0.00" if S.BY_NAME[name].kind == "float" else "0"
+        assert written == expected, f"{macro}: {name} is written as {written!r}, expected {expected!r}"
