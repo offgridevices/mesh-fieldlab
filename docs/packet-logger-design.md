@@ -160,6 +160,13 @@ The change will be offered upstream once it has proven itself in a real multi-no
 
 ### 5.2 Wiring
 
+This table is the contract between the firmware and the board. The carrier
+PCB that implements it lives in
+[offgridevices/offgrid-hardware](https://github.com/offgridevices/offgrid-hardware/tree/main/packet-logger-carrier);
+`tools/tests/test_pinmap.py` checks it against `firmware/src/config.h`, so
+changing the wiring means moving all three together. Wiring by hand on
+protoboard works from the same table.
+
 | RAK19003 | Signal | XIAO ESP32-C6 | GPIO |
 |---|---|---|---|
 | J7 pin 2 | TX | **D7** (RX) | 17 |
