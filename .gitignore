@@ -202,9 +202,18 @@ cython_debug/
 # Visual Studio Code
 #   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+#
+# NOTE: enabled on purpose. Workspace settings are not just formatting - keys
+# such as chat.agentSkillsLocations designate folders as sources of agent
+# skills, the instruction files an AI assistant loads and follows. Committing
+# those makes repo content able to steer every contributor's assistant with no
+# explicit opt-in, and .github/ in particular gets read as CI config rather
+# than as instructions. Keep editor settings personal; see the revert of
+# 95d60cb. Force a specific file in with `git add -f` if one is ever genuinely
+# shared.
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
