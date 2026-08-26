@@ -31,6 +31,9 @@ from fieldlab import schema as S
 #: every link is comfortable, which would exercise nothing.
 #:
 #: Calibrated to be plausible, not accurate. Replace with measurements.
+BROADCAST_ADDR = 4_294_967_295
+"""Meshtastic's all-nodes destination, and what Range Test sends to."""
+
 RSSI_AT_100M = -55.0
 PATH_LOSS_PER_DECADE = 35.0
 
@@ -53,6 +56,32 @@ class MeshConfig:
     region: str = "US"
     hop_limit: int = 3
     antenna: str = "rak-stock-3dbi"
+
+    #: What the preset above actually stands for, which is what a v4 BOOT row
+    #: records. These are LONG_FAST on US915.
+    use_preset: bool = True
+    tx_power_dbm: int = 30
+    bandwidth_khz: int = 250
+    spread_factor: int = 11
+    coding_rate: int = 5
+    channel_num: int = 20
+
+    #: Seconds one packet occupies the channel. The Semtech figure for this
+    #: preset at a real Meshtastic packet size, and the basis of the synthetic
+    #: channel utilisation below — so that the number in a generated file is
+    #: the one the offered load actually implies, rather than a decoration.
+    time_on_air_s: float = 0.477
+
+    #: How often the radio is asked what it knows about its neighbours. Matches
+    #: NODE_REPORT_MS in the firmware.
+    node_report_s: int = 300
+
+    #: Share of node reports that arrive with no device-metrics block, which is
+    #: what a neighbour heard once in passing looks like. Non-zero by default
+    #: on purpose: absent readings are ordinary in real files, and a generator
+    #: that never produces one lets every reader downstream get away with
+    #: assuming a number is always there.
+    metrics_absent_fraction: float = 0.08
     #: Fraction of direct receptions that also arrive a second time by another
     #: route — the flood copies the analysis has to remove.
     duplicate_fraction: float = 0.12
@@ -102,6 +131,18 @@ def _base_rssi(distance_m: float, bias_db: float) -> float:
     return RSSI_AT_100M - PATH_LOSS_PER_DECADE * math.log10(d / 100.0) + bias_db
 
 
+def _pct(value: float) -> str:
+    """A percentage the radio could actually have reported.
+
+    The noise added to these figures is Gaussian and therefore unbounded, so at
+    a low offered load it can carry the value below zero — and a generator that
+    emits files its own validator rejects is worse than useless, because it is
+    reached for precisely when something else is already suspect. Clamped for
+    the same reason `emit` clamps RSSI rather than trusting the model.
+    """
+    return f"{max(0.0, min(100.0, value)):.1f}"
+
+
 def _row(**values: object) -> str:
     row = {name: "0" for name in S.COLUMN_NAMES}
     row["schema_ver"] = str(S.SCHEMA_VERSION)
@@ -147,6 +188,10 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                 "hops": str(c.hop_limit), "boot": str(c.boot_count),
                 "lat": f"{n.lat:.6f}", "lon": f"{n.lon:.6f}", "alt": str(n.alt),
                 "ant": c.antenna, "name": n.name,
+                "usepreset": "1" if c.use_preset else "0",
+                "txpwr": str(c.tx_power_dbm), "bw": str(c.bandwidth_khz),
+                "sf": str(c.spread_factor), "cr": str(c.coding_rate),
+                "chan": str(c.channel_num), "txon": "1",
                 "st_card": "1", "st_write": "1", "st_radio": "1",
                 "st_pos": "1", "st_clock": "1" if c.set_clock else "0",
                 "st_heard": str(c.node_count - 1), "disp": "1", "batt": "92",
@@ -167,27 +212,79 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
             hop_start=c.hop_limit,
             hops_used=hops,
             relay_node=rng.randint(1, 255) if hops else 0,
+            # Range Test traffic is broadcast, which is what makes every node
+            # a receiver of every transmission.
+            to_node=BROADCAST_ADDR,
             portnum=1,
+            decoded=1,
             payload_size=rng.randint(8, 40),
             channel=0,
             row_type=S.ROW_PKT,
         ))
         node.rows += 1
 
+    # What the shared channel actually costs at this offered load. Every node
+    # broadcasts, so every transmission is audible to the whole mesh, and the
+    # figure is the one the interval and the time on air imply rather than a
+    # number picked to look plausible.
+    tx_per_minute = (60.0 / c.interval_s) * c.node_count
+    utilisation_pct = min(100.0, tx_per_minute * c.time_on_air_s / 60.0 * 100.0)
+
+    def node_rows(node: _Node, second: int) -> None:
+        """One row per neighbour the radio knows about, as the logger writes them."""
+        for subject in nodes:
+            absent = rng.random() < c.metrics_absent_fraction
+            pairs = {
+                "name": subject.name,
+                "lat": f"{subject.lat:.6f}",
+                "lon": f"{subject.lon:.6f}",
+                "batt": str(92 - subject.index),
+                "last_heard": str(clock(max(0, second - rng.randint(0, 90)))),
+                "pos_time": str(clock(0)),
+                # A radio that sent no metrics block reports nothing, not zero.
+                "chan_util": S.ABSENT if absent else _pct(utilisation_pct + rng.gauss(0, 0.6)),
+                "air_tx": S.ABSENT if absent else _pct(utilisation_pct / c.node_count + rng.gauss(0, 0.2)),
+                "volt": S.ABSENT if absent else f"{4.02 - subject.index * 0.03:.2f}",
+            }
+            node.lines.append(_row(
+                # No offset. Reports and packets can land in the same second,
+                # and anything later than the packets that follow them reads as
+                # the clock going backwards — which the checker treats as a
+                # reboot mid-file, correctly, because that is what it means.
+                uptime_ms=second * 1000,
+                dev_rx_time=clock(second),
+                rx_node=node.node_id,
+                tx_node=subject.node_id,
+                row_type=S.ROW_NODE,
+                extra=S.format_extra(pairs),
+            ))
+
     next_status = 60
+    next_report = c.node_report_s
     pkt_id = rng.randint(100_000, 400_000)
 
     for second in range(c.interval_s, c.duration_s + 1, c.interval_s):
-        while second >= next_status:
-            for n in nodes:
-                n.lines.append(_row(
-                    uptime_ms=next_status * 1000, dev_rx_time=clock(next_status),
-                    rx_node=n.node_id, row_type=S.ROW_STATUS,
-                    extra=S.format_extra(
-                        {"rows": str(n.rows), "sd_ok": "1", "heap": "182400"}
-                    ),
-                ))
-            next_status += 60
+        # STATUS and NODE rows are both catch-up emissions on their own
+        # cadences, and both stamp themselves with their own moment rather than
+        # with `second`. Draining one queue before the other lets a NODE row
+        # land after a STATUS row from a later moment whenever `interval_s`
+        # steps over a due time — which the checker reads, correctly, as the
+        # clock going backwards mid-file. Always emit whichever is due first.
+        while min(next_status, next_report) <= second:
+            if next_status <= next_report:
+                for n in nodes:
+                    n.lines.append(_row(
+                        uptime_ms=next_status * 1000, dev_rx_time=clock(next_status),
+                        rx_node=n.node_id, row_type=S.ROW_STATUS,
+                        extra=S.format_extra(
+                            {"rows": str(n.rows), "sd_ok": "1", "heap": "182400"}
+                        ),
+                    ))
+                next_status += 60
+            else:
+                for n in nodes:
+                    node_rows(n, next_report)
+                next_report += c.node_report_s
 
         # One transmission, one packet id, seen by whoever can hear it.
         sender = nodes[(second // c.interval_s) % len(nodes)]

@@ -1,6 +1,7 @@
 #include "logfile.h"
 
 #include <FS.h>
+#include <math.h>
 #include <Preferences.h>
 #include <SD.h>
 #include <SPI.h>
@@ -26,7 +27,22 @@ uint8_t  g_failedTries = 0;
 
 // One row is well under this. Sized with room to spare rather than tuned:
 // a truncated row is a corrupted measurement, and RAM is not the constraint.
-char g_line[512];
+// The BOOT row is the long one — it carries the whole settings block — and it
+// grew in v4, so this grew with it.
+char g_line[768];
+
+// A float the radio may not have supplied, rendered for the `extra` column.
+//
+// The library hands back NaN when a node report arrived with no device-metrics
+// block, which is ordinary rather than exceptional: a neighbour heard once in
+// passing has no metrics to report. Put through printf, NaN reaches the card as
+// "nan" and the checker rejects the row as a malformed number — so absence is
+// written as an empty value, which the schema defines as "not reported".
+const char * reading(char * buf, size_t n, double v, int places) {
+  if (isnan(v)) { buf[0] = '\0'; return buf; }
+  snprintf(buf, n, "%.*f", places, v);
+  return buf;
+}
 
 // Marks the card unusable and closes the handle, so the retry path starts
 // from a clean state rather than a half-open file.
@@ -202,7 +218,7 @@ void writeBoot(const char * extra) {
   // rows. That is what lets two nodes' files be lined up against each other
   // across a quiet stretch when nothing was received.
   int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
-  snprintf(g_line + n, sizeof(g_line) - n, "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_BOOT ",%s\n", extra);
+  snprintf(g_line + n, sizeof(g_line) - n, NO_PKT_COLS ROW_BOOT ",%s\n", extra);
   append(g_line);
 }
 
@@ -216,8 +232,12 @@ void writePacket(const mt_packet_meta_t * meta) {
 
   int n = prefix(g_line, sizeof(g_line), meta->rx_time);
   snprintf(g_line + n, sizeof(g_line) - n,
-           "%lu,%lu,%ld,%.2f,%u,%u,%u,%u,%u,%u,%lu,%u,%u," ROW_PKT ",\n",
+           "%lu,%lu,%lu,%ld,%.2f,%u,%u,%u,%u,%u,%u,%lu,%u,%u,%u," ROW_PKT ",\n",
            (unsigned long)meta->from,
+           // Broadcast is 0xFFFFFFFF. Without this column a packet addressed
+           // to one node and a packet addressed to the whole mesh look
+           // identical, and they load the channel differently.
+           (unsigned long)meta->to,
            (unsigned long)meta->id,
            (long)meta->rx_rssi,
            meta->rx_snr,
@@ -228,6 +248,11 @@ void writePacket(const mt_packet_meta_t * meta) {
            (unsigned)meta->next_hop,
            (unsigned)(meta->via_mqtt ? 1 : 0),
            (unsigned long)meta->portnum,
+           // portnum is only meaningful when this is 1. Previously a reader
+           // had to infer it from portnum being 0, which is also a legitimate
+           // portnum, so an undecodable packet and an UNKNOWN_APP one were
+           // indistinguishable.
+           (unsigned)(meta->is_decoded ? 1 : 0),
            (unsigned)meta->payload_size,
            (unsigned)meta->channel);
   append(g_line);
@@ -239,7 +264,7 @@ void writeStatus(uint32_t freeHeap, const char * note) {
   // across a quiet stretch when nothing was received.
   int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
   n += snprintf(g_line + n, sizeof(g_line) - n,
-                "0,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_STATUS
+                NO_PKT_COLS ROW_STATUS
                 ",rows=%lu;heap=%lu;sd_ok=%d;drops=%lu",
                 (unsigned long)g_rows,
                 (unsigned long)freeHeap,
@@ -273,19 +298,40 @@ void writeNode(const mt_node_t * node) {
   }
   if (name[0] == '\0') { name[0] = '_'; name[1] = '\0'; }
 
+  // channel_utilization is the measurement this row exists for. It is what
+  // the radio itself believes the shared channel is costing, which is the one
+  // number no amount of per-packet RSSI can be made to yield: a link that is
+  // strong and a link that is merely idle look identical from signal strength
+  // alone. air_util_tx is this node's own share of it.
+  //
+  // Both, and voltage, are absent whenever a node report arrived without a
+  // device-metrics block, so all three go through `reading`.
+  char cu[12], au[12], volt[12], lat[16], lon[16];
+
   // Once the clock is set every row carries absolute time, not just packet
   // rows. That is what lets two nodes' files be lined up against each other
   // across a quiet stretch when nothing was received.
   int n = prefix(g_line, sizeof(g_line), Clock::nowEpoch());
   snprintf(g_line + n, sizeof(g_line) - n,
-           "%lu,0,0,0.00,0,0,0,0,0,0,0,0,0," ROW_NODE
-           ",name=%s;lat=%.6f;lon=%.6f;batt=%u;last_heard=%lu\n",
+           "%lu," NO_PKT_AFTER_TX ROW_NODE
+           ",name=%s;lat=%s;lon=%s;batt=%u;last_heard=%lu"
+           ";chan_util=%s;air_tx=%s;volt=%s;pos_time=%lu\n",
            (unsigned long)node->node_num,
            name,
-           node->latitude,
-           node->longitude,
+           // The library reports a position it does not have as NaN, not as
+           // zero, so these went to the card as the literal text "nan" — which
+           // reads as a number to nothing and as a coordinate to no one.
+           reading(lat, sizeof(lat), node->latitude, 6),
+           reading(lon, sizeof(lon), node->longitude, 6),
            (unsigned)node->battery_level,
-           (unsigned long)node->last_heard_from);
+           (unsigned long)node->last_heard_from,
+           reading(cu, sizeof(cu), node->channel_utilization, 1),
+           reading(au, sizeof(au), node->air_util_tx, 1),
+           reading(volt, sizeof(volt), node->voltage, 2),
+           // When the position this row quotes was actually fixed. A stale
+           // coordinate and a fresh one are the same six decimal places
+           // otherwise, and only one of them says where the node is now.
+           (unsigned long)node->time_of_last_position);
   append(g_line);
 }
 

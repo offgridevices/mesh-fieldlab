@@ -110,6 +110,14 @@ class _Checker:
         self._last_uptime = -1
         self._last_dev_time = 0
         self._last_status_uptime: int | None = None
+        # Chosen by the header, before any row is read. A file is one version
+        # throughout — the firmware writes the header once, at open — so this
+        # is settled once and then governs every column lookup below.
+        self._version = S.SCHEMA_VERSION
+        self._columns = S.columns_for(S.SCHEMA_VERSION)
+        self._names = S.column_names_for(S.SCHEMA_VERSION)
+        self._packet_only = S.packet_only_for(S.SCHEMA_VERSION)
+        self._specs = S.extra_specs_for(S.SCHEMA_VERSION)
 
     # -- issue helpers ----------------------------------------------------
 
@@ -186,11 +194,26 @@ class _Checker:
     def _check_header(self, header_line: str) -> bool:
         got = next(csv.reader([header_line]), [])
         got = [f.strip() for f in got]
-        if got == list(S.COLUMN_NAMES):
+
+        # The header decides which layout the rest of the file is read under.
+        # It has to: a v3 file read against v4 columns misaligns every value
+        # from tx_node onward and still produces rows that parse cleanly, which
+        # is the failure mode worth the most trouble to avoid.
+        version = S.version_for_header(got)
+        if version is not None:
+            self._version = version
+            self._columns = S.columns_for(version)
+            self._names = S.column_names_for(version)
+            self._packet_only = S.packet_only_for(version)
+            self._specs = S.extra_specs_for(version)
+            self.summary.schema_versions.add(version)
             return True
 
-        missing = [c for c in S.COLUMN_NAMES if c not in got]
-        unexpected = [c for c in got if c not in S.COLUMN_NAMES]
+        # No layout matched. Report against the newest, which is what a file
+        # written by current firmware should look like.
+        expected = S.COLUMN_NAMES
+        missing = [c for c in expected if c not in got]
+        unexpected = [c for c in got if c not in expected]
         detail = []
         if missing:
             detail.append(f"missing {', '.join(missing)}")
@@ -198,7 +221,12 @@ class _Checker:
             detail.append(f"unexpected {', '.join(unexpected)}")
         if not detail:
             detail.append("columns are in the wrong order")
-        self.err("HEADER", f"header does not match schema {S.SCHEMA_VERSION}: {'; '.join(detail)}")
+        self.err(
+            "HEADER",
+            f"header matches no schema this tooling knows "
+            f"(tried {sorted(S.SUPPORTED_SCHEMA_VERSIONS, reverse=True)}); "
+            f"against v{S.SCHEMA_VERSION}: {'; '.join(detail)}",
+        )
         return False
 
     # -- per-row checks ---------------------------------------------------
@@ -207,7 +235,7 @@ class _Checker:
         if not row or (len(row) == 1 and not row[0].strip()):
             return  # blank line
 
-        expected = len(S.COLUMN_NAMES)
+        expected = len(self._names)
         if len(row) != expected:
             if is_last and not ends_cleanly and len(row) < expected:
                 self.warn(
@@ -225,7 +253,7 @@ class _Checker:
                 )
             return
 
-        values = dict(zip(S.COLUMN_NAMES, (v.strip() for v in row)))
+        values = dict(zip(self._names, (v.strip() for v in row)))
 
         row_type = values["row_type"]
         if row_type not in S.ROW_TYPES:
@@ -249,7 +277,7 @@ class _Checker:
         """Parse every numeric column, reporting each bad one before giving up."""
         out: dict[str, float] = {}
         ok = True
-        for col in S.COLUMNS:
+        for col in self._columns:
             if col.kind in ("enum", "extra"):
                 continue
             raw = values[col.name]
@@ -287,6 +315,16 @@ class _Checker:
                 "SCHEMA_VERSION",
                 f"schema_ver={ver} is not one this tooling knows how to read "
                 f"(supported: {sorted(S.SUPPORTED_SCHEMA_VERSIONS)})",
+                lineno,
+            )
+        elif ver != self._version:
+            # The columns were read under the header's layout, so a row
+            # claiming a different version has already been parsed against the
+            # wrong one. Nothing downstream can be trusted for this row.
+            self.err(
+                "SCHEMA_VERSION_MIXED",
+                f"schema_ver={ver} but the header is v{self._version}; one file is written "
+                "under one version, so this row has been read against the wrong columns",
                 lineno,
             )
 
@@ -397,7 +435,7 @@ class _Checker:
             bucket[(tx, rx)] += 1
 
     def _check_non_packet(self, values: dict[str, str], nums: dict[str, float], lineno: int, row_type: str) -> None:
-        for name in S.PACKET_ONLY:
+        for name in self._packet_only:
             # tx_node carries the subject node on NODE rows; everywhere else
             # the packet columns must be zeroed so nothing reads as real.
             if int(nums[name]) != 0:
@@ -419,7 +457,7 @@ class _Checker:
 
         raw_extra = values["extra"]
         pairs = S.parse_extra(raw_extra)
-        spec = S.EXTRA_SPECS[row_type]
+        spec = self._specs[row_type]
 
         # A fragment with no "=" means a separator ended up inside a value and
         # split it. The half before the separator was silently truncated, so
@@ -454,6 +492,33 @@ class _Checker:
                     f"value of {k!r} contains a comma or semicolon, which breaks the field apart",
                     lineno,
                 )
+
+        # Keys that carry a reading rather than a label. An empty value is the
+        # radio declining to answer and is always legal; anything else has to
+        # be a finite number inside its bounds, because these feed the analysis
+        # directly and an impossible one is far cheaper to catch on the card
+        # than to explain from a plot a fortnight later.
+        for k, (lo, hi) in spec.numeric.items():
+            raw = pairs.get(k)
+            if raw is None or raw == S.ABSENT:
+                continue
+            try:
+                num = float(raw)
+            except ValueError:
+                self.err("EXTRA_NOT_A_NUMBER", f"{k}={raw!r} in extra is not a number", lineno)
+                continue
+            if not math.isfinite(num):
+                self.err(
+                    "EXTRA_NOT_A_NUMBER",
+                    f"{k}={raw!r} in extra is not a finite number; the firmware writes an "
+                    "empty value for a reading the radio did not supply",
+                    lineno,
+                )
+                continue
+            if lo is not None and num < lo:
+                self.err("EXTRA_RANGE", f"{k}={raw} in extra is below the minimum {lo:g}", lineno)
+            if hi is not None and num > hi:
+                self.err("EXTRA_RANGE", f"{k}={raw} in extra is above the maximum {hi:g}", lineno)
 
         if row_type == S.ROW_BOOT:
             self.summary.boot_count = pairs.get("boot")

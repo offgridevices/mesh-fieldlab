@@ -169,7 +169,7 @@ void onNodeReport(mt_node_t * node, mt_nr_progress_t progress) {
 // was stood.
 void writeResumeBoot(uint32_t now) {
   SelfTest::refreshOwn(g_selfTest);
-  char extra[360];
+  char extra[512];
   SelfTest::toExtra(g_selfTest, g_bootCount, extra, sizeof(extra));
   size_t used = strlen(extra);
   // Seconds of session that happened before this file existed. Marks the file
@@ -421,7 +421,7 @@ void setup() {
   // thirty seconds of listening are spent counting neighbours, not logging;
   // losing them off the front of a two-hour session costs nothing.
   if (writable && LogFile::open(NODE_SHORT_NAME, g_bootCount)) {
-    char extra[360];
+    char extra[512];
     SelfTest::toExtra(result, g_bootCount, extra, sizeof(extra));
     LogFile::writeBoot(extra);
     Serial.printf("logging  : %s\n", LogFile::fileName());

@@ -118,6 +118,27 @@ bool awaitClock(uint32_t timeoutMs) {
   return Clock::valid();
 }
 
+// Copy the radio's settings into a result.
+//
+// This existed three times over — the boot read, the periodic refresh, and the
+// re-read after a radio comes back — which is three places to remember when a
+// field is added and two of them to forget. The settings that were missing from
+// the log until v4 are exactly the kind of thing that gets added to one copy.
+void adoptConfig(Result & r) {
+  r.have_config    = g_config.has_lora;
+  r.region         = g_config.region;
+  r.preset         = g_config.modem_preset;
+  r.hop_limit      = g_config.hop_limit;
+  r.tx_enabled     = g_config.tx_enabled;
+  r.fixed_position = g_config.has_position && g_config.fixed_position;
+  r.use_preset     = g_config.use_preset;
+  r.tx_power       = g_config.tx_power;
+  r.bandwidth      = g_config.bandwidth;
+  r.spread_factor  = g_config.spread_factor;
+  r.coding_rate    = g_config.coding_rate;
+  r.channel_num    = g_config.channel_num;
+}
+
 }  // namespace
 
 void noteRadioConfig(const mt_radio_config_t * config) {
@@ -243,12 +264,7 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   // Config arrives across the same exchange; give it a moment to land.
   serviceUntil(millis() + 2000);
   if (g_haveConfig) {
-    r.have_config    = g_config.has_lora;
-    r.region         = g_config.region;
-    r.preset         = g_config.modem_preset;
-    r.hop_limit      = g_config.hop_limit;
-    r.tx_enabled     = g_config.tx_enabled;
-    r.fixed_position = g_config.has_position && g_config.fixed_position;
+    adoptConfig(r);
   }
 
   snprintf(line, sizeof(line), "RADIO OK %s %s",
@@ -348,12 +364,7 @@ void refreshOwn(Result & r) {
   // phone is exactly how a position gets set, and the screen has to show that
   // landing or it cannot be used to confirm the node is ready.
   if (!g_haveConfig) return;
-  r.have_config    = g_config.has_lora;
-  r.region         = g_config.region;
-  r.preset         = g_config.modem_preset;
-  r.hop_limit      = g_config.hop_limit;
-  r.tx_enabled     = g_config.tx_enabled;
-  r.fixed_position = g_config.has_position && g_config.fixed_position;
+  adoptConfig(r);
 }
 
 bool positionUsable(const Result & r) {
@@ -383,12 +394,7 @@ bool reviewRadio(Result & r, bool alive) {
   // reflashes or reconfigures it — and a fault that has cleared but still
   // reads as a fault teaches people to ignore the screen.
   if (alive && g_haveConfig) {
-    r.have_config    = g_config.has_lora;
-    r.region         = g_config.region;
-    r.preset         = g_config.modem_preset;
-    r.hop_limit      = g_config.hop_limit;
-    r.tx_enabled     = g_config.tx_enabled;
-    r.fixed_position = g_config.has_position && g_config.fixed_position;
+    adoptConfig(r);
   }
   return true;
 }
@@ -397,11 +403,22 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
   snprintf(out, n,
            "fw=" LOGGER_VERSION ";ant=" ANTENNA_MODEL
            ";boot=%lu;preset=%s;region=%s;hops=%u"
+           // The settings the preset name stands for, written out rather than
+           // implied. With usepreset=0 the name above means nothing and these
+           // are the only record of how the radio was actually configured.
+           ";usepreset=%d;txpwr=%d;bw=%lu;sf=%u;cr=%u;chan=%lu;txon=%d"
            ";lat=%.6f;lon=%.6f;alt=%ld"
            ";st_card=%d;st_write=%d;st_radio=%d;st_pos=%d;st_clock=%d;st_heard=%u"
            ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu",
            (unsigned long)bootCount,
            presetName(r.preset), regionName(r.region), (unsigned)r.hop_limit,
+           r.use_preset ? 1 : 0,
+           (int)r.tx_power,
+           (unsigned long)r.bandwidth,
+           (unsigned)r.spread_factor,
+           (unsigned)r.coding_rate,
+           (unsigned long)r.channel_num,
+           r.tx_enabled ? 1 : 0,
            r.lat, r.lon, (long)r.alt,
            r.card_mounted ? 1 : 0,
            r.card_writable ? 1 : 0,

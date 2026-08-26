@@ -14,12 +14,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Versions this tooling can read. A file claiming a version outside this set
 # is an error rather than a warning: guessing at an unknown layout is how you
 # get a plausible-looking analysis of misread columns.
-SUPPORTED_SCHEMA_VERSIONS = frozenset({3})
+#
+# v3 stays readable on purpose. Bench captures taken under it are the only
+# recordings that exist, and dropping support would orphan them to make a
+# version constant tidier.
+SUPPORTED_SCHEMA_VERSIONS = frozenset({3, 4})
 
 # ---------------------------------------------------------------------------
 # Row types
@@ -77,6 +81,10 @@ COLUMNS: tuple[Column, ...] = (
     Column("dev_rx_time", "uint", "Device epoch seconds; 0 when the clock was never set", 0, UINT32_MAX),
     Column("rx_node", "uint", "The logging node; constant for the whole file", 1, UINT32_MAX),
     Column("tx_node", "uint", "Packet originator on PKT rows; subject node on NODE rows", 0, UINT32_MAX),
+    # Added in v4. Without it a packet sent to one node and a packet sent to
+    # the whole mesh are indistinguishable, and they cost the channel
+    # differently — which is most of what the airtime question is about.
+    Column("to_node", "uint", "Destination; BROADCAST_ADDR means the whole mesh", 0, UINT32_MAX, packet_only=True),
     Column("pkt_id", "uint", "Packet identifier; the dedupe key for flood copies", 0, UINT32_MAX, packet_only=True),
     Column("rx_rssi_dbm", "int", "Received signal strength; negative, closer to zero is stronger", RSSI_MIN, 0, packet_only=True),
     Column("rx_snr_db", "float", "Signal-to-noise ratio in dB", SNR_MIN, SNR_MAX, packet_only=True),
@@ -86,7 +94,11 @@ COLUMNS: tuple[Column, ...] = (
     Column("relay_node", "uint", "Last byte of the relaying node's number, 0 if none", 0, BYTE_MAX, packet_only=True),
     Column("next_hop", "uint", "Last byte of the intended next hop, 0 if none", 0, BYTE_MAX, packet_only=True),
     Column("via_mqtt", "uint", "1 if the packet came in over the internet rather than the air", 0, 1, packet_only=True),
-    Column("portnum", "uint", "Application port; 0 when the payload could not be decoded", 0, UINT32_MAX, packet_only=True),
+    Column("portnum", "uint", "Application port; only meaningful when decoded is 1", 0, UINT32_MAX, packet_only=True),
+    # Added in v4. Until it existed, an undecodable packet was inferred from
+    # portnum being 0 — but 0 is also UNKNOWN_APP, a portnum a decoded packet
+    # can legitimately carry, so the two cases were not separable.
+    Column("decoded", "uint", "1 if the payload could be decrypted and read", 0, 1, packet_only=True),
     Column("payload_size", "uint", "Payload bytes", 0, 256, packet_only=True),
     # Not always an index. The protocol reuses this field to carry a channel
     # *hash* whenever the payload is encrypted, and says so in mesh.proto:
@@ -102,12 +114,59 @@ COLUMNS: tuple[Column, ...] = (
     Column("extra", "extra", "Key=value detail for non-packet rows; empty on PKT rows"),
 )
 
-COLUMN_NAMES: tuple[str, ...] = tuple(c.name for c in COLUMNS)
-COLUMN_INDEX: dict[str, int] = {c.name: i for i, c in enumerate(COLUMNS)}
-BY_NAME: dict[str, Column] = {c.name: c for c in COLUMNS}
-PACKET_ONLY: tuple[str, ...] = tuple(c.name for c in COLUMNS if c.packet_only)
+#: Columns v4 introduced. Every other column kept its name, its meaning and
+#: its position relative to the rest, which is what makes it safe to derive the
+#: older layout by subtraction rather than maintaining two hand-written lists
+#: that can drift apart.
+ADDED_IN_V4 = frozenset({"to_node", "decoded"})
 
-HEADER = ",".join(COLUMN_NAMES)
+COLUMNS_BY_VERSION: dict[int, tuple[Column, ...]] = {
+    3: tuple(c for c in COLUMNS if c.name not in ADDED_IN_V4),
+    4: COLUMNS,
+}
+
+
+def columns_for(version: int) -> tuple[Column, ...]:
+    """The column layout a file of this version was written under."""
+    try:
+        return COLUMNS_BY_VERSION[version]
+    except KeyError:
+        raise ValueError(f"no column layout is recorded for schema version {version}") from None
+
+
+def column_names_for(version: int) -> tuple[str, ...]:
+    return tuple(c.name for c in columns_for(version))
+
+
+def packet_only_for(version: int) -> tuple[str, ...]:
+    return tuple(c.name for c in columns_for(version) if c.packet_only)
+
+
+def header_for(version: int) -> str:
+    return ",".join(column_names_for(version))
+
+
+def version_for_header(fields: list[str]) -> int | None:
+    """Which schema version this header line is, or None if it matches none.
+
+    The header is read before any row, so it is the only thing available to
+    choose a layout by — and it has to be the thing that chooses, because
+    reading a v3 file against v4 columns misaligns every value after tx_node
+    while still producing a row that parses.
+    """
+    for version in sorted(COLUMNS_BY_VERSION, reverse=True):
+        if fields == list(column_names_for(version)):
+            return version
+    return None
+
+
+# The current version's tables, for callers that write rather than read.
+COLUMN_NAMES: tuple[str, ...] = column_names_for(SCHEMA_VERSION)
+COLUMN_INDEX: dict[str, int] = {name: i for i, name in enumerate(COLUMN_NAMES)}
+BY_NAME: dict[str, Column] = {c.name: c for c in COLUMNS}
+PACKET_ONLY: tuple[str, ...] = packet_only_for(SCHEMA_VERSION)
+
+HEADER = header_for(SCHEMA_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -127,15 +186,31 @@ EXTRA_KV_SEP = "="
 EXTRA_FORBIDDEN = ",;"
 
 
+#: A key whose value is the empty string. The firmware writes this when the
+#: radio did not supply a reading — a node report that arrived with no
+#: device-metrics block, which is ordinary for a neighbour heard once in
+#: passing. It is deliberately not a sentinel number: every number a sentinel
+#: could use is one some radio could legitimately report, and a NaN put through
+#: printf reaches the card as "nan", which reads as neither a value nor an
+#: absence.
+ABSENT = ""
+
+
 @dataclass(frozen=True)
 class RowSpec:
     """What a non-packet row must carry in its `extra` column."""
 
     required: frozenset[str]
     optional: frozenset[str] = field(default_factory=frozenset)
+    #: Bounds for keys whose value must be a number when it is present at all.
+    #: Checked only on a non-empty value, so ABSENT stays legal everywhere.
+    #: A utilisation of 500% is a firmware bug, and catching it on the card
+    #: beats explaining an impossible plot a fortnight later.
+    numeric: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
 
 
-EXTRA_SPECS: dict[str, RowSpec] = {
+_SPECS_V3: dict[str, RowSpec] = {
+
     # Written once at startup: everything needed to interpret the rest of the
     # file without consulting a notebook.
     #
@@ -188,6 +263,70 @@ EXTRA_SPECS: dict[str, RowSpec] = {
     ),
     ROW_PKT: RowSpec(required=frozenset()),
 }
+
+# --- v4 ---------------------------------------------------------------------
+#
+# Three groups of key arrived together, deliberately, as one version bump.
+#
+# The radio settings on BOOT close a gap that made the file unable to explain
+# its own measurements: a preset name alone is only binding while usepreset is
+# 1, and every RSSI reading is relative to a transmit power that was recorded
+# nowhere.
+#
+# The metrics on NODE are the point of the exercise. chan_util is what the
+# radio believes the shared channel costs, which no amount of per-packet signal
+# strength can be made to yield.
+#
+# `up` is reserved rather than written. The library drops uptime_seconds before
+# user code reaches it, so writing it needs a change to the pinned fork; listing
+# it as optional now means that change will not need a v5.
+
+_BOOT_RADIO_SETTINGS = frozenset({"usepreset", "txpwr", "bw", "sf", "cr", "chan", "txon"})
+_NODE_METRICS = frozenset({"chan_util", "air_tx", "volt", "pos_time"})
+
+_SPECS_V4: dict[str, RowSpec] = {
+    ROW_BOOT: RowSpec(
+        required=_SPECS_V3[ROW_BOOT].required | _BOOT_RADIO_SETTINGS,
+        optional=_SPECS_V3[ROW_BOOT].optional,
+        numeric={
+            "usepreset": (0, 1),
+            "txon": (0, 1),
+            # dBm at the connector. Meshtastic clamps to the region's legal
+            # ceiling, so the bound here is only a sanity net.
+            "txpwr": (-30, 40),
+            "bw": (0, 2000),        # kHz
+            "sf": (0, 12),          # 0 means the radio had not said yet
+            "cr": (0, 8),           # the 4/N denominator
+            "chan": (0, 200),       # frequency slot
+        },
+    ),
+    ROW_STATUS: _SPECS_V3[ROW_STATUS],
+    ROW_NODE: RowSpec(
+        required=_SPECS_V3[ROW_NODE].required | _NODE_METRICS,
+        optional=_SPECS_V3[ROW_NODE].optional | frozenset({"up"}),
+        numeric={
+            # Percentages, as the radio reports them.
+            "chan_util": (0, 100),
+            "air_tx": (0, 100),
+            "volt": (0, 20),
+        },
+    ),
+    ROW_PKT: _SPECS_V3[ROW_PKT],
+}
+
+EXTRA_SPECS_BY_VERSION: dict[int, dict[str, RowSpec]] = {3: _SPECS_V3, 4: _SPECS_V4}
+
+
+def extra_specs_for(version: int) -> dict[str, RowSpec]:
+    """What `extra` must carry, for a file of this version."""
+    try:
+        return EXTRA_SPECS_BY_VERSION[version]
+    except KeyError:
+        raise ValueError(f"no extra specification is recorded for schema version {version}") from None
+
+
+#: The current version's specification, for callers that write rather than read.
+EXTRA_SPECS: dict[str, RowSpec] = extra_specs_for(SCHEMA_VERSION)
 
 #: STATUS rows are written every 60 s. A gap materially longer than that means
 #: the logger stalled, so the run has a hole in it even if the rows parse.

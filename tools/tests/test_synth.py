@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -19,8 +20,25 @@ from fieldlab.synth import MeshConfig, synth_session
 from fieldlab.validate import validate_text
 
 
-def test_every_generated_file_passes_the_checker():
-    for name, text in synth_session(MeshConfig()).items():
+# Offered load, not just the defaults. The channel figures carry Gaussian
+# noise, and the default config sits high enough above zero that the noise can
+# never reach it — so testing only the defaults proved nothing about the
+# settings the design document actually recommends starting from. A sparse mesh
+# on a conservative interval used to put chan_util and air_tx below zero and
+# have the checker reject every file the generator wrote.
+LOADS = {
+    "defaults": MeshConfig(),
+    "sparse-1min": MeshConfig(node_count=2, interval_s=60),
+    "sparse-5min": MeshConfig(node_count=2, interval_s=300, duration_s=3600),
+    "quiet-2min": MeshConfig(node_count=3, interval_s=120, duration_s=3600),
+}
+
+
+@pytest.mark.parametrize("load", sorted(LOADS), ids=sorted(LOADS))
+@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
+def test_every_generated_file_passes_the_checker(load, seed):
+    config = replace(LOADS[load], seed=seed)
+    for name, text in synth_session(config).items():
         result = validate_text(text, name)
         assert result.errors == [], (name, [str(i) for i in result.errors])
         assert result.warnings == [], (name, [str(i) for i in result.warnings])

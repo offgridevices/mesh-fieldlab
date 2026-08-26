@@ -382,20 +382,21 @@ The stamp is the node's **local** time at the moment logging started — a perso
 Where the time comes from at all is §8.
 
 ```
-schema_ver,uptime_ms,dev_rx_time,rx_node,tx_node,pkt_id,rx_rssi_dbm,rx_snr_db,
-hop_limit,hop_start,hops_used,relay_node,next_hop,via_mqtt,portnum,payload_size,
-channel,row_type,extra
+schema_ver,uptime_ms,dev_rx_time,rx_node,tx_node,to_node,pkt_id,rx_rssi_dbm,
+rx_snr_db,hop_limit,hop_start,hops_used,relay_node,next_hop,via_mqtt,portnum,
+decoded,payload_size,channel,row_type,extra
 ```
 
 `tools/src/fieldlab/schema.py` is the machine-readable version of this section, and `validate-csv --schema` prints the exact header the firmware must write.
 
 | Field | Meaning |
 |---|---|
-| `schema_ver` | Starts at 3. Bump on any change |
+| `schema_ver` | **4.** Bump on any change. v3 files stay readable — the header decides which layout a file is read under, and both are still understood |
 | `uptime_ms` | Milliseconds since boot — the authoritative relative clock |
 | `dev_rx_time` | Device epoch seconds — absolute clock, `0` if never set |
 | `rx_node` | The logging node. Constant for the whole file |
 | `tx_node` | Packet originator on `PKT` rows; the node being described on `NODE` rows |
+| `to_node` | **v4.** Destination. `4294967295` is broadcast, which is what Range Test sends; a directed packet and a broadcast cost the channel differently |
 | `pkt_id` | Dedupe key for flood copies |
 | `rx_rssi_dbm` | Negative; closer to zero is stronger. **`0` means locally originated — filter out** |
 | `rx_snr_db` | LoRa decodes to roughly −20 dB |
@@ -403,6 +404,7 @@ channel,row_type,extra
 | `hops_used` | Computed as `hop_start - hop_limit`. **`0` means direct reception** |
 | `relay_node` / `next_hop` | Single bytes — the *last byte* of a node number, not a whole one. Routing hints, `0` if none |
 | `via_mqtt` | Must be `0`; anything else means an internet gateway is polluting the data |
+| `decoded` | **v4.** `1` if the payload could be decrypted. `portnum` means nothing when this is `0` — and `0` is also a legitimate portnum, so before this column the two cases were not separable |
 | `portnum`, `payload_size`, `channel` | Application port, byte count, channel index |
 | `row_type` | `PKT` \| `STATUS` \| `NODE` \| `BOOT` |
 | `extra` | Empty on `PKT` rows. Everything a non-packet row needs to say, as `key=value` pairs joined by `;` |
@@ -416,13 +418,31 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 | Row | Written | Required in `extra` |
 |---|---|---|
 | `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
+| `BOOT` also carries | **v4**, required | `usepreset`, `txpwr`, `bw`, `sf`, `cr`, `chan`, `txon` — what the preset name actually stands for. A preset is only binding while `usepreset` is `1`; with it `0` the radio is on the explicit `bw`/`sf`/`cr` and the name it still reports is a leftover. `txpwr` is never implied by a preset at all, and every RSSI reading in the file is relative to it |
 | `BOOT` also carries | optionally | `st_card`, `st_write`, `st_radio`, `st_pos`, `st_clock`, `st_heard`, `batt`, `disp` — what the boot self-test (§9.1) found |
 | `BOOT` also carries | on a resumed file | `resume` — seconds of session already elapsed when this file was opened, because the card arrived late or was swapped (§9.4) |
 | `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
 | `STATUS` also carries | optionally | `drops` — rows formed with nowhere to write them; `recov` — the blocks that just came back, joined with `+` (§9.4) |
 | `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
+| `NODE` also carries | **v4**, required | `chan_util`, `air_tx`, `volt`, `pos_time` — see §6.3 |
+| `NODE` also carries | optionally | `snr`, `hops`, `up` — reserved. The library drops these before user code reaches them, so writing them needs a change to the pinned fork; reserving them now means that change will not need a v5 |
 
 Adding an **optional** key does not bump the schema version: a reader that does not know it emits a warning and carries on, and every old file stays valid. Adding a column, changing a range, or adding a *required* key does.
+
+**A reading the radio did not supply is written as an empty value**, never as a zero — `chan_util=` rather than `chan_util=0`. A channel genuinely at 0% and a radio that did not answer are different facts, and a session that quietly averaged the second into the first would report a quiet channel it never measured. The firmware writes empty wherever the library hands back NaN, which is what a node report with no device-metrics block produces — ordinary for a neighbour heard once in passing.
+
+### 6.3 What the `NODE` row measures
+
+`chan_util` is the reason these rows are worth their space.
+
+Signal strength answers whether a link exists. It cannot answer what the link *cost*, because a channel that is idle and a channel that is saturated produce identical RSSI. `chan_util` is the radio's own estimate of the fraction of wall-clock time the channel was busy — including every other transmitter on the frequency, which no record of our own traffic could ever see. `air_tx` is this node's own share of the last hour.
+
+Two things follow for anyone reading a session:
+
+- **Utilisation is a property of a place, not of a node.** It is recorded against the node that *reported* it. The rows a node writes about its neighbours repeat what those neighbours last advertised, which is a different measurement taken somewhere else, and counting them would average away exactly the differences between positions that the session exists to find.
+- **Above roughly a quarter of the channel the measurement changes meaning.** Meshtastic holds back non-critical traffic once utilisation is high, so past that point a session measures the radio's own governor rather than the path. `analyze-logs` warns when peak utilisation crosses 25%.
+
+`volt` is a truer battery state than the percentage beside it, and `pos_time` is when the coordinate on the row was actually fixed — a stale position and a fresh one are otherwise the same six decimal places.
 
 ### 6.2 The checker
 
@@ -786,6 +806,30 @@ meshtastic --port <PORT> \
 
 **Airtime discipline.** Four nodes at one packet per minute on LONG_FAST is modest, but a hop limit of 3 means flooding multiplies packets on air. **Start at 60 s.** Going below 30 s without computing airtime will saturate the channel and you will measure congestion rather than path loss.
 
+### 10.1 What the channel actually costs
+
+The arithmetic, so the paragraph above is a computation rather than a habit. Time on air is the Semtech formula at a real Meshtastic packet — roughly 30 bytes with a 16-symbol preamble, not the 64-byte datasheet shape, which is about 40% longer:
+
+| Preset | Config | Time on air |
+|---|---|---|
+| `LONG_FAST` | SF11, BW 250 kHz | **477 ms** |
+| `MEDIUM_FAST` | SF9, BW 250 kHz | 130 ms |
+| `SHORT_FAST` | SF7, BW 250 kHz | 40 ms |
+
+Flooding is the multiplier that matters. Each node rebroadcasts a given packet at most once, so with a hop limit of 3 one originated packet becomes **between one and four transmissions** — one where nothing else can hear the sender, four where every node hears every other. Both ends of that range are live in a real deployment, because how much of the mesh each node can hear is exactly what a site decides — and it is rarely the same for every node in one run.
+
+At `LONG_FAST`, per node, for the whole mesh:
+
+| Sender interval | Originated per node | On air near a node | Channel busy |
+|---|---|---|---|
+| 60 s | 1 / min | 4 – 16 | **3.2 – 12.7%** |
+| 30 s | 2 / min | 8 – 32 | 6.4 – 25.4% |
+| 15 s | 4 / min | 16 – 64 | 12.7 – **50.9%** |
+
+**Two consequences worth knowing before setting the interval.** Meshtastic holds back non-critical traffic once channel utilisation is high, and Range Test traffic is exactly the class it holds back — so past roughly a quarter of the channel the radios throttle themselves and the session measures the governor, not the path. And US 915 MHz carries no European-style duty-cycle ceiling, so nothing here is limited by regulation; the binding constraints are that governor and the channel itself.
+
+**Do not take these as a substitute for measuring.** From schema v4 the radios report their own channel utilisation on every `NODE` row (§6.3) and `analyze-logs` prints it, so a session says what the load actually was rather than what this table predicted. Where the two disagree, the file is right.
+
 **Target ≥100 received packets per directed link** for a stable median — per *link*, not per node. That distinction sets the length of the whole field day, and getting it wrong is how a session comes home a third short.
 
 With four nodes each sending once a minute, a node hears about three packets a minute, but only **one per minute from any one sender**. Reaching 100 on every link therefore takes roughly **100 minutes of received packets, not 35** — and longer in practice, because only direct receptions (`hops_used == 0`) count toward a path measurement and some fraction of arrivals will have been relayed.
@@ -802,7 +846,15 @@ hops_used = hop_start - hop_limit
 
 **Only rows with `hops_used == 0` measure a direct RF path** between transmitter and receiver. Everything else measured the last relay's link. Build the link matrix from direct rows only; keep relayed rows for routing behaviour.
 
-### 11.2 Deduplication
+### 11.2 What the link cost, as opposed to whether it existed
+
+`analyze-logs` prints a **CHANNEL LOAD** block beside the link table: median and peak utilisation per node, and each node's own share of transmit time. Read it before reading the link figures, because it decides what they mean.
+
+A median in the low single digits means the links below were measured on a quiet channel and the numbers are about the path. A peak in the tens of percent means they were measured under congestion, and a weak link there may be a busy channel rather than a poor path — the two are indistinguishable from RSSI alone, which is the whole reason the column exists. The tool warns when peak utilisation crosses 25%.
+
+Reports arriving with no metrics block are excluded rather than counted as zero, and the count of those is printed, so a node whose radio never reported cannot masquerade as a node on an idle channel.
+
+### 11.3 Deduplication
 
 Flood routing means the same packet ID arrives via multiple relays. Dedupe on `(tx_node, pkt_id, hops_used)` before counting anything.
 
