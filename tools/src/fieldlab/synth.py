@@ -131,6 +131,18 @@ def _base_rssi(distance_m: float, bias_db: float) -> float:
     return RSSI_AT_100M - PATH_LOSS_PER_DECADE * math.log10(d / 100.0) + bias_db
 
 
+def _pct(value: float) -> str:
+    """A percentage the radio could actually have reported.
+
+    The noise added to these figures is Gaussian and therefore unbounded, so at
+    a low offered load it can carry the value below zero — and a generator that
+    emits files its own validator rejects is worse than useless, because it is
+    reached for precisely when something else is already suspect. Clamped for
+    the same reason `emit` clamps RSSI rather than trusting the model.
+    """
+    return f"{max(0.0, min(100.0, value)):.1f}"
+
+
 def _row(**values: object) -> str:
     row = {name: "0" for name in S.COLUMN_NAMES}
     row["schema_ver"] = str(S.SCHEMA_VERSION)
@@ -230,8 +242,8 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                 "last_heard": str(clock(max(0, second - rng.randint(0, 90)))),
                 "pos_time": str(clock(0)),
                 # A radio that sent no metrics block reports nothing, not zero.
-                "chan_util": S.ABSENT if absent else f"{utilisation_pct + rng.gauss(0, 0.6):.1f}",
-                "air_tx": S.ABSENT if absent else f"{utilisation_pct / c.node_count + rng.gauss(0, 0.2):.1f}",
+                "chan_util": S.ABSENT if absent else _pct(utilisation_pct + rng.gauss(0, 0.6)),
+                "air_tx": S.ABSENT if absent else _pct(utilisation_pct / c.node_count + rng.gauss(0, 0.2)),
                 "volt": S.ABSENT if absent else f"{4.02 - subject.index * 0.03:.2f}",
             }
             node.lines.append(_row(
@@ -252,21 +264,27 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
     pkt_id = rng.randint(100_000, 400_000)
 
     for second in range(c.interval_s, c.duration_s + 1, c.interval_s):
-        while second >= next_status:
-            for n in nodes:
-                n.lines.append(_row(
-                    uptime_ms=next_status * 1000, dev_rx_time=clock(next_status),
-                    rx_node=n.node_id, row_type=S.ROW_STATUS,
-                    extra=S.format_extra(
-                        {"rows": str(n.rows), "sd_ok": "1", "heap": "182400"}
-                    ),
-                ))
-            next_status += 60
-
-        while second >= next_report:
-            for n in nodes:
-                node_rows(n, next_report)
-            next_report += c.node_report_s
+        # STATUS and NODE rows are both catch-up emissions on their own
+        # cadences, and both stamp themselves with their own moment rather than
+        # with `second`. Draining one queue before the other lets a NODE row
+        # land after a STATUS row from a later moment whenever `interval_s`
+        # steps over a due time — which the checker reads, correctly, as the
+        # clock going backwards mid-file. Always emit whichever is due first.
+        while min(next_status, next_report) <= second:
+            if next_status <= next_report:
+                for n in nodes:
+                    n.lines.append(_row(
+                        uptime_ms=next_status * 1000, dev_rx_time=clock(next_status),
+                        rx_node=n.node_id, row_type=S.ROW_STATUS,
+                        extra=S.format_extra(
+                            {"rows": str(n.rows), "sd_ok": "1", "heap": "182400"}
+                        ),
+                    ))
+                next_status += 60
+            else:
+                for n in nodes:
+                    node_rows(n, next_report)
+                next_report += c.node_report_s
 
         # One transmission, one packet id, seen by whoever can hear it.
         sender = nodes[(second // c.interval_s) % len(nodes)]
