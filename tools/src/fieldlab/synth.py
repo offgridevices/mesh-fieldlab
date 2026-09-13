@@ -90,6 +90,10 @@ class MeshConfig:
     #: Applies only to reports that have metrics at all, since the flag is a
     #: field inside that block rather than a replacement for it.
     uptime_absent_fraction: float = 0.10
+
+    #: Whether the button line was healthy at boot. False generates the
+    #: recording a node with a shorted button produces.
+    button_ok: bool = True
     #: Fraction of direct receptions that also arrive a second time by another
     #: route — the flood copies the analysis has to remove.
     duplicate_fraction: float = 0.12
@@ -203,6 +207,7 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                 "st_card": "1", "st_write": "1", "st_radio": "1",
                 "st_pos": "1", "st_clock": "1" if c.set_clock else "0",
                 "st_heard": str(c.node_count - 1), "disp": "1", "batt": "92",
+                "st_btn": "1" if c.button_ok else "0",
                 "rfw": c.radio_firmware,
             }),
         ))

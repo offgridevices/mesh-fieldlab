@@ -65,6 +65,19 @@
 #define BOOT_LISTEN_MS      30000UL   // Self-test: listen for neighbours
 #define SCREEN_WAKE_MS      10000UL   // How long a button press lights the screen
 
+// How long the button line must read pressed at boot before it is called
+// stuck. Costs nothing on a healthy node, because the sampling stops the
+// instant the line goes high.
+//
+// Deliberately longer than the 2 s hold that the clock-skip gesture uses, so
+// that somebody holding the button on purpose is never recorded as a fault.
+// If it is ever shortened below that, a held button starts writing st_btn=0.
+#define BUTTON_STUCK_MS     3000UL
+
+// How often the screen is redrawn while the button line is stuck down and
+// cannot ask for it.
+#define STUCK_REPAINT_MS    2000UL
+
 // How long the boot waits for the time before logging without it.
 //
 // Nothing is logged until the clock is set, because a file that starts before

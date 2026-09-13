@@ -290,6 +290,8 @@ void sleep() {
   g_asleep = true;
 }
 
+bool asleep() { return g_asleep; }
+
 void wake() {
   if (!g_present || !g_asleep) return;
   g_oled.setPowerSave(0);

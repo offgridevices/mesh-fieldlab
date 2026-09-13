@@ -16,6 +16,11 @@ const uint8_t MAX_NEIGHBOURS = 8;
 
 mt_radio_config_t g_config;
 bool     g_haveConfig = false;
+
+// Set by the boot check below. A stuck line reads as a button held forever,
+// which would silently trigger every hold-to-act shortcut in the firmware —
+// so those are disabled once the line is known to be untrustworthy.
+bool     g_buttonStuck = false;
 uint8_t  g_battery    = 0;
 double   g_lat        = 0.0;
 double   g_lon        = 0.0;
@@ -90,7 +95,11 @@ bool awaitClock(uint32_t timeoutMs) {
     // over a time, and sitting through the full timeout to test anything else
     // wastes ten minutes. Held rather than pressed, so that a knock in a bag
     // cannot quietly cost a session its timestamps.
-    if (digitalRead(BUTTON_PIN) == LOW) {
+    //
+    // Ignored outright when the line is stuck: a shorted button reads as held
+    // from the instant of boot, which would skip this wait on every single
+    // start and leave a session undated for a reason nothing reported.
+    if (!g_buttonStuck && digitalRead(BUTTON_PIN) == LOW) {
       if (heldSince == 0) {
         heldSince = now;
       } else if (now - heldSince >= 2000) {
@@ -236,6 +245,24 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
   Screen::show(NODE_SHORT_NAME " starting", line, "radio...", nullptr);
 
   say("display  : %s", displayOk ? "found" : "ABSENT (carrying on)");
+
+  // Sampled rather than read once: a single low reading is indistinguishable
+  // from somebody's finger on the button as the node came up.
+  {
+    uint32_t until = millis() + BUTTON_STUCK_MS;
+    bool held = true;
+    while (millis() < until) {
+      if (digitalRead(BUTTON_PIN) != LOW) { held = false; break; }
+      delay(10);
+    }
+    r.button_stuck = held;
+    g_buttonStuck  = held;
+  }
+  if (r.button_stuck) {
+    say("button   : STUCK — the line reads pressed and never releases");
+    say("           check for a bridge between the button pin and ground");
+    say("           the screen will stay on, since it cannot be woken");
+  }
   say("card     : %s", cardMounted ? "mounted" : "NOT MOUNTED");
   say("card test: %s", cardWritable ? "wrote and read back a row"
                                     : "FAILED — will not record");
@@ -426,7 +453,8 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            ";usepreset=%d;txpwr=%d;bw=%lu;sf=%u;cr=%u;chan=%lu;txon=%d"
            ";lat=%.6f;lon=%.6f;alt=%ld"
            ";st_card=%d;st_write=%d;st_radio=%d;st_pos=%d;st_clock=%d;st_heard=%u"
-           ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu;rfw=%s",
+           ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu;rfw=%s"
+           ";st_btn=%d",
            (unsigned long)bootCount,
            presetName(r.preset), regionName(r.region), (unsigned)r.hop_limit,
            r.use_preset ? 1 : 0,
@@ -457,7 +485,11 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            // The logger's own version is `fw`. This is the radio's, which
            // nothing else in the file records — without it a session cannot
            // say which firmware produced its measurements.
-           r.radio_fw);
+           r.radio_fw,
+           // 1 = the button worked at boot, 0 = the line was stuck down. The
+           // one check whose failure the screen cannot report, because the
+           // screen is what the button exists to wake.
+           r.button_stuck ? 0 : 1);
 }
 
 const char * verdict(const Result & r) {

@@ -422,10 +422,13 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 | `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
 | `BOOT` also carries | **v4**, required | `usepreset`, `txpwr`, `bw`, `sf`, `cr`, `chan`, `txon` — what the preset name actually stands for. A preset is only binding while `usepreset` is `1`; with it `0` the radio is on the explicit `bw`/`sf`/`cr` and the name it still reports is a leftover. `txpwr` is never implied by a preset at all, and every RSSI reading in the file is relative to it |
 | `BOOT` also carries | optionally | `st_card`, `st_write`, `st_radio`, `st_pos`, `st_clock`, `st_heard`, `batt`, `disp` — what the boot self-test (§9.1) found |
+| `BOOT` also carries | optionally | `region` — the radio's regulatory region, read back off the radio rather than assumed. Two nodes in different regions are on different frequencies and cannot be compared at all |
+| `BOOT` also carries | optionally | `hw`, `libver` — the radio's hardware model and the client library's version. Reserved; nothing writes them yet |
+| `BOOT` also carries | optionally | `st_btn` — the button line at boot: `1` worked, `0` was stuck down. The only self-test result the screen cannot report, because a stuck button is exactly what stops the screen being woken to show it |
 | `BOOT` also carries | optionally | `rfw` — the radio's own firmware version, which `fw` does not cover: that one is the logger's. The radio volunteers it during the config exchange; empty when it has not |
 | `BOOT` also carries | on a resumed file | `resume` — seconds of session already elapsed when this file was opened, because the card arrived late or was swapped (§9.4) |
 | `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
-| `STATUS` also carries | optionally | `drops` — rows formed with nowhere to write them; `recov` — the blocks that just came back, joined with `+` (§9.4) |
+| `STATUS` also carries | optionally | `drops` — rows formed with nowhere to write them; `recov` — the blocks that just came back, joined with `+` (§9.4); `errs` — write errors survived since boot |
 | `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
 | `NODE` also carries | **v4**, required | `chan_util`, `air_tx`, `volt`, `pos_time` — see §6.3 |
 | `NODE` also carries | optionally | `up` — seconds since that node last restarted. Empty when the report carried no metrics block, or carried one without an uptime: a node that has just restarted reports zero and means it, so absence cannot be written as one |

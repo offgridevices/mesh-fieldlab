@@ -670,3 +670,21 @@ def test_an_empty_radio_firmware_version_is_absence_not_a_malformed_value():
     assert result.ok
     assert error_codes(result) == set()
     assert codes(result) == set()
+
+
+def test_a_stuck_button_is_reported_as_a_warning_not_an_error():
+    # The data in the file is unaffected, so it must not fail the file. But it
+    # means nobody could read the node while the session ran, which is worth
+    # knowing before trusting how the session was conducted.
+    extra = S.format_extra({**_BOOT_BASE, "st_btn": "0", **BOOT_RADIO_DEFAULTS})
+    result = validate_text(_file_with(boot_extra=extra), "LOG_N1_20260806_0706.csv")
+    assert result.ok, "a stuck button must not invalidate the recording"
+    assert error_codes(result) == set()
+    assert "SELFTEST" in codes(result)
+
+
+def test_a_working_button_is_reported_as_nothing_at_all():
+    extra = S.format_extra({**_BOOT_BASE, "st_btn": "1", **BOOT_RADIO_DEFAULTS})
+    result = validate_text(_file_with(boot_extra=extra), "LOG_N1_20260806_0706.csv")
+    assert result.ok
+    assert codes(result) == set()

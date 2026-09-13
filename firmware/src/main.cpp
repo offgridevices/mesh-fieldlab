@@ -29,6 +29,9 @@ bool g_booting = true;
 uint32_t g_lastStatus = 0;
 uint32_t g_lastLed = 0;
 uint32_t g_screenOffAt = 0;
+
+//: When the screen was last repainted while the button line is stuck down.
+uint32_t g_stuckPaintedAt = 0;
 uint32_t g_packetsSeen = 0;
 uint32_t g_lastPacketAt = 0;
 
@@ -306,6 +309,39 @@ void serviceRecovery(uint32_t now, const Recovery::Event & ev) {
 // repaint must not happen more often than a person can read.
 void serviceButton(uint32_t now) {
   bool down = (digitalRead(BUTTON_PIN) == LOW);
+
+  // A line stuck down is not a press. Treating it as one would wake the screen
+  // once, then never again — there is no release to make the next edge — which
+  // is exactly how this failed on the bench: a screen that lights at boot, goes
+  // dark, and answers nothing thereafter.
+  //
+  // So while the line is untrustworthy the screen simply stays on. It is the
+  // only way left to read the node, and a display that cannot be dimmed costs
+  // current, which is a great deal better than a node that cannot be read.
+  if (g_selfTest.button_stuck) {
+    if (!down) {
+      // It came back. Nothing here needs a power cycle, the same way nothing
+      // else in this firmware does.
+      g_selfTest.button_stuck = false;
+      g_buttonWasDown = false;
+      g_buttonChangedAt = now;
+      g_screenOffAt = now + SCREEN_WAKE_MS;
+      Serial.println("button   : released — the line recovered, screen sleeps again");
+      return;
+    }
+    // Held on, and kept current. A lit screen frozen on the boot page is worse
+    // than a blank one: hours later it still shows the card healthy and the
+    // radio answering, and somebody standing over it has no way to tell it
+    // stopped being true. Repainted on the same cadence a person would get by
+    // pressing, so what it shows is what is happening.
+    if (Screen::asleep()) Screen::wake();
+    if (now - g_stuckPaintedAt >= STUCK_REPAINT_MS) {
+      g_stuckPaintedAt = now;
+      refreshView();
+      Screen::page(g_page, g_view);
+    }
+    return;
+  }
 
   if (down != g_buttonWasDown) {
     if (now - g_buttonChangedAt > 40) {

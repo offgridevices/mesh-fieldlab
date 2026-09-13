@@ -148,3 +148,35 @@ def test_the_library_pin_is_a_commit_not_a_branch() -> None:
         assert _PIN_RE.search(line), (
             f"the library reference is not pinned to a 40-character commit: {line.strip()!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The `extra` key table
+#
+# §6.1 of the design document lists what each row type carries. It is the only
+# prose description of the format, and it has now fallen behind the code twice:
+# once for the library pin above, once for a key added in the same change that
+# updated the table for two others. A key nobody documents is a key nobody
+# knows to look for on a card.
+# ---------------------------------------------------------------------------
+
+
+def test_every_extra_key_the_schema_defines_is_documented() -> None:
+    if not DESIGN_DOC.exists():
+        pytest.skip("design document not present")
+
+    import sys
+
+    sys.path.insert(0, str(REPO / "tools" / "src"))
+    from fieldlab import schema as S
+
+    doc = DESIGN_DOC.read_text(encoding="utf-8")
+    defined: set[str] = set()
+    for spec in S.EXTRA_SPECS.values():
+        defined |= spec.required | spec.optional
+
+    undocumented = sorted(k for k in defined if f"`{k}`" not in doc)
+    assert not undocumented, (
+        f"{DESIGN_DOC.name} §6.1 does not mention {undocumented}. Every key the "
+        "firmware can write has to be findable by somebody reading a card."
+    )

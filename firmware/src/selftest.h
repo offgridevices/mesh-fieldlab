@@ -14,6 +14,12 @@ namespace SelfTest {
 
 struct Result {
   bool     display_ok     = false;
+
+  // The button line, read at boot. It is the only control on a sealed box, and
+  // the only check here whose failure the screen itself cannot show — a stuck
+  // line reads as a press that never ends, so the screen can never be woken to
+  // display the fault. Recorded so the card can say what the screen could not.
+  bool     button_stuck   = false;
   bool     card_mounted   = false;
   bool     card_writable  = false;
   uint32_t free_mb        = 0;

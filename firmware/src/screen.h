@@ -81,4 +81,8 @@ void page(uint8_t index, const NodeView & v);
 void sleep();
 void wake();
 
+// True while the panel is blanked. Lets a caller that has lost its wake-up
+// mechanism tell whether the screen needs bringing back.
+bool asleep();
+
 }  // namespace Screen

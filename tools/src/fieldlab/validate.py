@@ -564,6 +564,12 @@ class _Checker:
             "st_radio": (ERROR, "the radio did not answer on the serial link"),
             "st_pos":   (ERROR, "no fixed position was set, so these rows cannot be tied to a place"),
             "st_clock": (WARNING, "the clock was never set, so rows are only relative to boot"),
+            # A warning, not an error: a stuck button costs nobody the data in
+            # the file. It costs them the ability to read the node in the field
+            # — the screen cannot be woken — so a session may have been run
+            # blind without whoever ran it knowing why.
+            "st_btn":   (WARNING, "the button line was stuck down at boot, so the screen "
+                                  "could not be woken and the node was unreadable in the field"),
         }
         for key, (level, message) in failed.items():
             if pairs.get(key) == "0":

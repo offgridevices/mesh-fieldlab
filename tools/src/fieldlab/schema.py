@@ -225,6 +225,11 @@ _SPECS_V3: dict[str, RowSpec] = {
             {
                 "name", "region", "hops", "hw", "libver", "batt", "disp",
                 "st_card", "st_write", "st_radio", "st_pos", "st_clock", "st_heard",
+                # The button line at boot: 1 worked, 0 was stuck down. Unlike
+                # its siblings this one cannot be read off the screen after the
+                # fact, because a stuck button is precisely what stops the
+                # screen being woken — so the card is the only witness.
+                "st_btn",
                 # The filename is local time; tz and utcoff are what turn it
                 # back into UTC without anyone having to remember which week
                 # the clocks changed.
