@@ -26,6 +26,12 @@ from pathlib import Path
 
 from fieldlab import schema as S
 
+#: How many recoveries of one block make it a flapping fault rather than a
+#: recovered one. Three is well clear of a genuine intermittent — a card
+#: reseated twice in a session is plausible — and far below the hundreds a
+#: real oscillation produces.
+FLAPPING_RECOVERIES = 3
+
 ERROR = "error"
 WARNING = "warning"
 
@@ -647,7 +653,39 @@ class _Checker:
                 f"{s.rows_dropped} rows were formed with nowhere to write them; the "
                 "card was unusable for part of this run and that much is missing",
             )
+        # Two passes, because the two questions are different. Whether a block
+        # is flapping is a question about that block, and the firmware joins
+        # blocks that recovered together into one value — so "radio",
+        # "pos+radio" and "card+radio" all have to count toward the radio.
+        # Describing a single recovery, though, is best done with the value
+        # exactly as written: "card+radio came back" is one event, not two.
+        by_block: dict[str, list[int]] = {}
         for what, uptime in s.recoveries:
+            for block in str(what).split("+"):
+                block = block.strip()
+                if block:
+                    by_block.setdefault(block, []).append(uptime)
+
+        flapping = {b: ups for b, ups in by_block.items() if len(ups) >= FLAPPING_RECOVERIES}
+
+        for block in sorted(flapping):
+            ups = flapping[block]
+            span_min = (max(ups) - min(ups)) / 60000
+            self.err(
+                "FLAPPING",
+                f"{block} recovered {len(ups)} times across {span_min:.0f} min "
+                f"(first at {min(ups) / 60000:.0f} min, last at {max(ups) / 60000:.0f} min). "
+                "That is not a fault clearing, it is a fault repeating: treat the whole "
+                "file as suspect and find out why the block keeps dropping.",
+            )
+
+        # Anything not caught above is a real recovery and reads as one. Events
+        # involving a flapping block are skipped: they are already accounted
+        # for, and repeating them is what buried the findings in the first place.
+        for what, uptime in s.recoveries:
+            blocks = {b.strip() for b in str(what).split("+") if b.strip()}
+            if blocks & flapping.keys():
+                continue
             self.warn(
                 "RECOVERED",
                 f"{what} failed and then came back {uptime / 60000:.0f} min in; "

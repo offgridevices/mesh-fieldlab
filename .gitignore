@@ -300,7 +300,10 @@ data/raw/
 # `config/<node>.redacted.json`, with the security block removed — which is
 # all the settings record was ever for.
 # ---------------------------------------------------------------------------
-config/
+# `config/*` and not `config/`: git does not descend into an excluded
+# directory, so a negation below a directory-level exclusion never gets the
+# chance to apply and the redacted dump could never be committed at all.
+config/*
 !config/*.redacted.json
 
 # ---------------------------------------------------------------------------

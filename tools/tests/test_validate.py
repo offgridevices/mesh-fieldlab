@@ -688,3 +688,80 @@ def test_a_working_button_is_reported_as_nothing_at_all():
     result = validate_text(_file_with(boot_extra=extra), "LOG_N1_20260806_0706.csv")
     assert result.ok
     assert codes(result) == set()
+
+
+# ---------------------------------------------------------------------------
+# Flapping
+#
+# A real bench run produced 105 identical "radio recovered" warnings in twelve
+# minutes, caused by a timing bug in the firmware. The file was reported as
+# having no errors, and the two it did have were buried under the repetition.
+# A block that recovers over and over has not recovered at all.
+# ---------------------------------------------------------------------------
+
+
+def _status_with_recov(uptime_ms: int) -> str:
+    return row(
+        S.ROW_STATUS,
+        uptime_ms=uptime_ms,
+        dev_rx_time=T0 + uptime_ms // 1000,
+        extra=S.format_extra({"rows": "1", "sd_ok": "1", "heap": "396152", "recov": "radio"}),
+    )
+
+
+def test_one_recovery_reads_as_a_recovery():
+    f = make_file(
+        row(S.ROW_BOOT, uptime_ms=100, dev_rx_time=T0),
+        _status_with_recov(120000),
+    )
+    result = validate_text(f, "LOG_N1_20260806_0706.csv")
+    assert "RECOVERED" in codes(result)
+    assert "FLAPPING" not in codes(result)
+    assert error_codes(result) == set()
+
+
+def test_a_block_that_keeps_recovering_is_an_error_not_a_warning():
+    # The file is not trustworthy: something is wrong with the node, and the
+    # readings either side of a hundred boundaries cannot be reasoned about.
+    f = make_file(
+        row(S.ROW_BOOT, uptime_ms=100, dev_rx_time=T0),
+        *[_status_with_recov(60000 + i * 1000) for i in range(40)],
+    )
+    result = validate_text(f, "LOG_N1_20260806_0706.csv")
+    assert "FLAPPING" in error_codes(result)
+    # And it must be said once, not forty times.
+    assert sum(1 for i in result.issues if i.code == "FLAPPING") == 1
+
+
+def test_repeated_recoveries_are_reported_once_with_a_count():
+    f = make_file(
+        row(S.ROW_BOOT, uptime_ms=100, dev_rx_time=T0),
+        *[_status_with_recov(60000 + i * 1000) for i in range(40)],
+    )
+    result = validate_text(f, "LOG_N1_20260806_0706.csv")
+    msg = next(i.message for i in result.issues if i.code == "FLAPPING")
+    assert "40 times" in msg
+
+
+def test_flapping_is_counted_per_block_even_when_blocks_recover_together():
+    # The firmware joins blocks that came back at the same moment with '+'.
+    # Counting the joined string would split one flapping radio across three
+    # groups, each below the threshold, and report nothing at all.
+    rows = [row(S.ROW_BOOT, uptime_ms=100, dev_rx_time=T0)]
+    for i, what in enumerate(["radio", "pos+radio", "card+radio", "radio"]):
+        rows.append(
+            row(
+                S.ROW_STATUS,
+                uptime_ms=60000 + i * 1000,
+                dev_rx_time=T0 + 60 + i,
+                extra=S.format_extra(
+                    {"rows": "1", "sd_ok": "1", "heap": "396152", "recov": what}
+                ),
+            )
+        )
+    result = validate_text(make_file(*rows), "LOG_N1_20260806_0706.csv")
+    msgs = [i.message for i in result.issues if i.code == "FLAPPING"]
+    assert len(msgs) == 1, f"expected one flapping report, got {msgs}"
+    assert msgs[0].startswith("radio recovered 4 times")
+    # card and pos each appear once, so neither is flapping.
+    assert "card recovered" not in " ".join(msgs)

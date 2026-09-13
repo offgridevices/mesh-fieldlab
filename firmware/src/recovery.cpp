@@ -32,7 +32,24 @@ bool radioAlive(uint32_t now) {
   // reason to guess. my_node_num is set only by a reply, so it is the proof
   // that the link worked at least once.
   if (my_node_num == 0 || g_lastContact == 0) return false;
-  return (now - g_lastContact) < RADIO_SILENT_MS;
+
+  // g_lastContact can be a few milliseconds AHEAD of `now`. The callbacks that
+  // set it run inside mt_loop(), which the loop calls after it sampled `now` —
+  // so a packet arriving mid-loop is stamped later than the tick that judges
+  // it. Unsigned, that subtraction wraps to about 49 days and condemns a radio
+  // that has this instant spoken.
+  //
+  // Left unguarded this does not merely mis-report once: the radio is declared
+  // dead, recovers on the next tick, and that recovery is written to the card.
+  // Being "not ok" also makes the probe fire every few seconds, whose replies
+  // arrive mid-loop and start it again. One bench run produced 105 status rows
+  // in 12 minutes, every one of them claiming the radio had just come back.
+  // Only a small negative means "stamped a moment ago". Treating every
+  // negative as alive would bless a genuine silence past ~24.8 days, where the
+  // difference goes negative again for the opposite reason.
+  const int32_t since = (int32_t)(now - g_lastContact);
+  if (since < 0) return since > -(int32_t)RADIO_SKEW_MS;
+  return (uint32_t)since < RADIO_SILENT_MS;
 }
 
 void ask(uint32_t now, bool probe) {
@@ -147,7 +164,7 @@ Event tick(uint32_t now, SelfTest::Result & r, uint8_t heardCount) {
       // A silent radio is asked hard and often. It costs nothing, nothing is
       // arriving anyway, and the sooner it answers the sooner the node records.
       askEvery = RADIO_ASK_EVERY_MS;
-    } else if (now - g_lastContact >= RADIO_SILENT_MS / 2) {
+    } else if ((int32_t)(now - g_lastContact) >= (int32_t)(RADIO_SILENT_MS / 2)) {  // NOLINT
       // Quiet, but not yet condemned. A single dropped reply must not be left
       // to sit until the next scheduled report before anyone checks again.
       askEvery = RECOVERY_INTERVAL_MS;

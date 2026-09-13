@@ -21,6 +21,10 @@ bool     g_haveConfig = false;
 // which would silently trigger every hold-to-act shortcut in the firmware —
 // so those are disabled once the line is known to be untrustworthy.
 bool     g_buttonStuck = false;
+
+// Whether the button line has been seen released at any point during the boot
+// sequence. One high reading is enough to prove the line is not shorted.
+bool     g_buttonEverHigh = false;
 uint8_t  g_battery    = 0;
 double   g_lat        = 0.0;
 double   g_lon        = 0.0;
@@ -70,6 +74,12 @@ void say(const char * fmt, ...) {
 void serviceUntil(uint32_t deadline) {
   while ((int32_t)(millis() - deadline) < 0) {
     mt_loop(millis());
+    // Watched here rather than sampled in one window, because this runs for
+    // the whole boot. A line that is never once high across the radio wait and
+    // the neighbour listen — well over a minute — is shorted. A person holding
+    // the button cannot produce that, and the hold that skips the clock wait
+    // comes later still, so the two can no longer be confused.
+    if (digitalRead(BUTTON_PIN) != LOW) g_buttonEverHigh = true;
     delay(5);
   }
 }
@@ -246,23 +256,12 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
 
   say("display  : %s", displayOk ? "found" : "ABSENT (carrying on)");
 
-  // Sampled rather than read once: a single low reading is indistinguishable
-  // from somebody's finger on the button as the node came up.
-  {
-    uint32_t until = millis() + BUTTON_STUCK_MS;
-    bool held = true;
-    while (millis() < until) {
-      if (digitalRead(BUTTON_PIN) != LOW) { held = false; break; }
-      delay(10);
-    }
-    r.button_stuck = held;
-    g_buttonStuck  = held;
-  }
-  if (r.button_stuck) {
-    say("button   : STUCK — the line reads pressed and never releases");
-    say("           check for a bridge between the button pin and ground");
-    say("           the screen will stay on, since it cannot be woken");
-  }
+  // Seeded here and settled at the end of the boot sequence, once the line has
+  // had the whole radio wait and neighbour listen to show itself released
+  // even once. Deciding it here, from a single short sample, cannot separate a
+  // short from a finger.
+  if (digitalRead(BUTTON_PIN) != LOW) g_buttonEverHigh = true;
+
   say("card     : %s", cardMounted ? "mounted" : "NOT MOUNTED");
   say("card test: %s", cardWritable ? "wrote and read back a row"
                                     : "FAILED — will not record");
@@ -364,6 +363,17 @@ Result run(bool displayOk, bool cardMounted, bool cardWritable, uint32_t freeMb,
 
   forgetSelfHeard();
   r.heard_count = g_heardCount;
+
+  // Settled now, not at the top: the line has had the whole radio wait and the
+  // neighbour listen — well over a minute — to read released even once. Never
+  // having done so is a short, not a finger.
+  r.button_stuck = !g_buttonEverHigh;
+  g_buttonStuck  = r.button_stuck;
+  if (r.button_stuck) {
+    say("button   : STUCK — the line read pressed for the whole boot");
+    say("           check for a bridge between the button pin and ground");
+    say("           the screen will stay on, since it cannot be woken");
+  }
   r.clock_set   = Clock::valid();
   r.battery_pct = g_battery;
   r.lat         = g_lat;

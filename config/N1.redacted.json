@@ -1,0 +1,53 @@
+{
+  "_note": "Redacted radio configuration. The security block, which carries the node's PKI private key, is deliberately absent and must never be committed.",
+  "device": {
+    "buttonGpio": 0,
+    "buzzerGpio": 21,
+    "buzzerMode": "ALL_ENABLED",
+    "disableTripleClick": true,
+    "doubleTapAsButtonPress": false,
+    "isManaged": false,
+    "ledHeartbeatDisabled": false,
+    "nodeInfoBroadcastSecs": 10800,
+    "rebroadcastMode": "ALL",
+    "role": "CLIENT",
+    "serialEnabled": false,
+    "tzdef": "EST5EDT,M3.2.0/2:00:00,M11.1.0/2:00:00"
+  },
+  "firmware_version": "2.7.26.54e0d8d",
+  "hw_model": "RAK4631",
+  "lora": {
+    "bandwidth": 250,
+    "channelNum": 0,
+    "codingRate": 5,
+    "configOkToMqtt": false,
+    "femLnaMode": "DISABLED",
+    "frequencyOffset": 0.0,
+    "hopLimit": 3,
+    "ignoreIncoming": [],
+    "ignoreMqtt": false,
+    "modemPreset": "LONG_FAST",
+    "overrideDutyCycle": false,
+    "overrideFrequency": 0.0,
+    "paFanDisabled": false,
+    "region": "US",
+    "serialHalOnly": false,
+    "spreadFactor": 11,
+    "sx126xRxBoostedGain": true,
+    "txEnabled": true,
+    "txPower": 30,
+    "usePreset": true
+  },
+  "node": "N1",
+  "role": "CLIENT",
+  "serial": {
+    "baud": "BAUD_38400",
+    "echo": false,
+    "enabled": true,
+    "mode": "PROTO",
+    "overrideConsoleSerialPort": false,
+    "rxd": 19,
+    "timeout": 0,
+    "txd": 20
+  }
+}

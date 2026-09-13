@@ -32,6 +32,10 @@ uint32_t g_screenOffAt = 0;
 
 //: When the screen was last repainted while the button line is stuck down.
 uint32_t g_stuckPaintedAt = 0;
+
+//: When a stuck button line was first seen released. Zero means it is still
+//: down, or that a candidate release turned out to be a glitch.
+uint32_t g_buttonReleasedAt = 0;
 uint32_t g_packetsSeen = 0;
 uint32_t g_lastPacketAt = 0;
 
@@ -320,15 +324,25 @@ void serviceButton(uint32_t now) {
   // current, which is a great deal better than a node that cannot be read.
   if (g_selfTest.button_stuck) {
     if (!down) {
-      // It came back. Nothing here needs a power cycle, the same way nothing
-      // else in this firmware does.
-      g_selfTest.button_stuck = false;
-      g_buttonWasDown = false;
-      g_buttonChangedAt = now;
-      g_screenOffAt = now + SCREEN_WAKE_MS;
-      Serial.println("button   : released — the line recovered, screen sleeps again");
+      // Believed only after the line has stayed released. A short that is
+      // intermittent rather than solid produces stray high readings, and
+      // acting on one would clear the flag for good: stuckness is judged at
+      // boot and never re-judged, so the screen would sleep ten seconds later
+      // with nothing able to wake it — the precise failure this exists to stop.
+      if (g_buttonReleasedAt == 0) {
+        g_buttonReleasedAt = now;
+      } else if (now - g_buttonReleasedAt >= BUTTON_UNSTUCK_MS) {
+        g_selfTest.button_stuck = false;
+        g_buttonReleasedAt = 0;
+        g_buttonWasDown = false;
+        g_buttonChangedAt = now;
+        g_screenOffAt = now + SCREEN_WAKE_MS;
+        Serial.println("button   : released — the line recovered, screen sleeps again");
+      }
       return;
     }
+    // Back down before the release was believed: it was a glitch, not a fix.
+    g_buttonReleasedAt = 0;
     // Held on, and kept current. A lit screen frozen on the boot page is worse
     // than a blank one: hours later it still shows the card healthy and the
     // radio answering, and somebody standing over it has no way to tell it

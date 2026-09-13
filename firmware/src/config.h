@@ -65,14 +65,11 @@
 #define BOOT_LISTEN_MS      30000UL   // Self-test: listen for neighbours
 #define SCREEN_WAKE_MS      10000UL   // How long a button press lights the screen
 
-// How long the button line must read pressed at boot before it is called
-// stuck. Costs nothing on a healthy node, because the sampling stops the
-// instant the line goes high.
-//
-// Deliberately longer than the 2 s hold that the clock-skip gesture uses, so
-// that somebody holding the button on purpose is never recorded as a fault.
-// If it is ever shortened below that, a held button starts writing st_btn=0.
-#define BUTTON_STUCK_MS     3000UL
+// How long the button line must read released, continuously, before a node
+// that booted with it stuck believes it again. A short that is intermittent
+// rather than solid would otherwise be cleared by one stray reading, and the
+// screen — whose only way back is this flag — would sleep and never return.
+#define BUTTON_UNSTUCK_MS   1000UL
 
 // How often the screen is redrawn while the button line is stuck down and
 // cannot ask for it.
@@ -114,6 +111,13 @@
 // tick starts probing at the halfway mark, so silence is challenged at six
 // minutes rather than waited out to twelve.
 #define RADIO_SILENT_MS     720000UL   // 12 min = 2.4 x NODE_REPORT_MS
+
+// How far ahead of the loop's own clock a radio timestamp may legitimately
+// sit. The callbacks that record contact run inside mt_loop(), which is called
+// after the loop sampled its time, so a reply arriving mid-loop is stamped a
+// few milliseconds later than the tick that judges it. Generous by three
+// orders of magnitude, and still nowhere near a real silence.
+#define RADIO_SKEW_MS       2000UL
 
 // How often to ask the radio for a report while this node has no usable fixed
 // position. The report is how a position set from a phone reaches the node, so
