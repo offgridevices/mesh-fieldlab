@@ -308,6 +308,13 @@ void writeNode(const mt_node_t * node) {
   // device-metrics block, so all three go through `reading`.
   char cu[12], au[12], volt[12], lat[16], lon[16];
 
+  // Uptime is optional within the metrics block, and a node that has just
+  // restarted reports zero and means it — so absence is written as empty
+  // rather than as a zero that would read as a genuine fresh boot.
+  char up[12];
+  if (node->has_uptime) snprintf(up, sizeof(up), "%lu", (unsigned long)node->uptime_seconds);
+  else                  up[0] = '\0';
+
   // Once the clock is set every row carries absolute time, not just packet
   // rows. That is what lets two nodes' files be lined up against each other
   // across a quiet stretch when nothing was received.
@@ -315,7 +322,7 @@ void writeNode(const mt_node_t * node) {
   snprintf(g_line + n, sizeof(g_line) - n,
            "%lu," NO_PKT_AFTER_TX ROW_NODE
            ",name=%s;lat=%s;lon=%s;batt=%u;last_heard=%lu"
-           ";chan_util=%s;air_tx=%s;volt=%s;pos_time=%lu\n",
+           ";chan_util=%s;air_tx=%s;volt=%s;pos_time=%lu;up=%s\n",
            (unsigned long)node->node_num,
            name,
            // The library reports a position it does not have as NaN, not as
@@ -331,7 +338,8 @@ void writeNode(const mt_node_t * node) {
            // When the position this row quotes was actually fixed. A stale
            // coordinate and a fresh one are the same six decimal places
            // otherwise, and only one of them says where the node is now.
-           (unsigned long)node->time_of_last_position);
+           (unsigned long)node->time_of_last_position,
+           up);
   append(g_line);
 }
 

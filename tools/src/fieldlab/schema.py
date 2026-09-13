@@ -277,17 +277,26 @@ _SPECS_V3: dict[str, RowSpec] = {
 # radio believes the shared channel costs, which no amount of per-packet signal
 # strength can be made to yield.
 #
-# `up` is reserved rather than written. The library drops uptime_seconds before
-# user code reaches it, so writing it needs a change to the pinned fork; listing
-# it as optional now means that change will not need a v5.
+# `up` is written. The library used to drop uptime_seconds before user code
+# reached it; the pinned fork now passes it through with a presence flag, and
+# listing it as optional here is what let that land without a v5.
+#
+# Optional and independently so: the flag lives *inside* the metrics block, so
+# "metrics present, uptime absent" is a real report and not a contradiction.
 
 _BOOT_RADIO_SETTINGS = frozenset({"usepreset", "txpwr", "bw", "sf", "cr", "chan", "txon"})
+
+# The radio's own firmware version, which `fw` does not cover — that one is the
+# logger's. Optional, and so costs no schema version: a radio only volunteers
+# its metadata during the config exchange, and a file written before the logger
+# asked for it is still a valid v4 file.
+_BOOT_RADIO_FIRMWARE = frozenset({"rfw"})
 _NODE_METRICS = frozenset({"chan_util", "air_tx", "volt", "pos_time"})
 
 _SPECS_V4: dict[str, RowSpec] = {
     ROW_BOOT: RowSpec(
         required=_SPECS_V3[ROW_BOOT].required | _BOOT_RADIO_SETTINGS,
-        optional=_SPECS_V3[ROW_BOOT].optional,
+        optional=_SPECS_V3[ROW_BOOT].optional | _BOOT_RADIO_FIRMWARE,
         numeric={
             "usepreset": (0, 1),
             "txon": (0, 1),

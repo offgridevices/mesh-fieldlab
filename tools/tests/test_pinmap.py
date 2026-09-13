@@ -96,3 +96,55 @@ def test_no_firmware_pin_is_undocumented(firmware: str) -> None:
         f"not check, or is missing {sorted(set(PINS) - defined)}. Document the "
         f"pin in {DESIGN_DOC.name} §5.2 and add it to PINS above."
     )
+
+
+# ---------------------------------------------------------------------------
+# The library pin
+#
+# §4.2 of the design document quotes the `lib_deps` line, and platformio.ini
+# is where it actually takes effect. The two drifted once already: the doc sat
+# at the first fork commit for weeks after the build had moved to the second,
+# which meant the document named a library without the radio-settings
+# callback. Nothing failed, because nothing was looking.
+# ---------------------------------------------------------------------------
+
+PLATFORMIO_INI = REPO / "firmware" / "platformio.ini"
+
+_PIN_RE = re.compile(
+    r"https://github\.com/offgridevices/Meshtastic-arduino\.git#([0-9a-f]{40})"
+)
+
+
+def test_the_design_doc_quotes_the_library_pin_the_build_actually_uses() -> None:
+    if not PLATFORMIO_INI.exists() or not DESIGN_DOC.exists():
+        pytest.skip("firmware not present")
+
+    built = _PIN_RE.findall(PLATFORMIO_INI.read_text(encoding="utf-8"))
+    documented = _PIN_RE.findall(DESIGN_DOC.read_text(encoding="utf-8"))
+
+    assert len(built) == 1, (
+        f"expected exactly one pinned library reference in {PLATFORMIO_INI.name}, "
+        f"found {len(built)}"
+    )
+    assert documented, (
+        f"{DESIGN_DOC.name} §4.2 no longer quotes a pinned library commit; it is "
+        "the only place the pin is explained, so it has to keep naming one."
+    )
+    assert set(documented) == set(built), (
+        f"{DESIGN_DOC.name} §4.2 says {sorted(set(documented))} but "
+        f"{PLATFORMIO_INI.name} builds against {built}. The build wins — update "
+        "the document."
+    )
+
+
+def test_the_library_pin_is_a_commit_not_a_branch() -> None:
+    """A floating reference cannot be rebuilt later, which is most of the point."""
+    if not PLATFORMIO_INI.exists():
+        pytest.skip("firmware not present")
+
+    for line in PLATFORMIO_INI.read_text(encoding="utf-8").splitlines():
+        if "Meshtastic-arduino" not in line:
+            continue
+        assert _PIN_RE.search(line), (
+            f"the library reference is not pinned to a 40-character commit: {line.strip()!r}"
+        )

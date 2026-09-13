@@ -121,15 +121,17 @@ void set_packet_meta_callback(void (*cb)(const mt_packet_meta_t *meta));
 
 Roughly 30 lines across two files. **Existing callback signatures and return values are untouched**, so the library's own examples still compile and future merges stay simple. With no callback registered the added cost is one null check per packet.
 
-**Status: written, and pinned below.** The change also ships an example sketch and a host-side test suite that builds the library against a stub Arduino layer, so the callback can be exercised on a development machine. Twenty-eight checks cover field-by-field propagation, direct versus relayed receptions, encrypted payloads, unrecognised port numbers, and registering and unregistering the callback. Passing them says nothing about real hardware — that is what §12 is for — but it means the first bench session starts from code already known to compile and behave.
+**Status: written, and pinned below.** The change also ships an example sketch and a host-side test suite that builds the library against a stub Arduino layer, so the callback can be exercised on a development machine. Sixty checks cover field-by-field propagation, direct versus relayed receptions, encrypted payloads, unrecognised port numbers, registering and unregistering the callback, the radio's settings and firmware version, and the node report's altitude and uptime. Passing them says nothing about real hardware — that is what §12 is for — but it means the first bench session starts from code already known to compile and behave.
 
 ### 4.2 Delivered as a fork
 
 The change lives in a **fork of `Meshtastic-arduino` under the `offgridevices` org**, and this repository references it pinned to an exact commit:
 
 ```ini
-lib_deps = https://github.com/offgridevices/Meshtastic-arduino.git#8f17d8010a916ca1307dc9ae0da31bb4964b17d7
+lib_deps = https://github.com/offgridevices/Meshtastic-arduino.git#ce1aafb8eafcc776b7de9db002147ce88eba669b
 ```
+
+The pinned commit is the authority; `firmware/platformio.ini` is where it actually lives, and this block is a copy of it. Four changes are in the fork, in order: the per-packet reception metadata callback, the radio-settings callback, the altitude widening (§15 item 8), and the node uptime and radio firmware version (§15 item 9).
 
 This keeps the repository's no-vendored-source rule intact — what is committed here is a reference, not somebody else's code. It also satisfies GPL-3.0's requirement that modified versions carry clear notice of change, structurally: the fork's commit history *is* the notice.
 
@@ -420,12 +422,14 @@ Values may not contain a comma or a semicolon. That keeps the field unquoted and
 | `BOOT` | Once at startup | `fw`, `preset`, `boot`, `lat`, `lon`, `alt`, `ant` |
 | `BOOT` also carries | **v4**, required | `usepreset`, `txpwr`, `bw`, `sf`, `cr`, `chan`, `txon` — what the preset name actually stands for. A preset is only binding while `usepreset` is `1`; with it `0` the radio is on the explicit `bw`/`sf`/`cr` and the name it still reports is a leftover. `txpwr` is never implied by a preset at all, and every RSSI reading in the file is relative to it |
 | `BOOT` also carries | optionally | `st_card`, `st_write`, `st_radio`, `st_pos`, `st_clock`, `st_heard`, `batt`, `disp` — what the boot self-test (§9.1) found |
+| `BOOT` also carries | optionally | `rfw` — the radio's own firmware version, which `fw` does not cover: that one is the logger's. The radio volunteers it during the config exchange; empty when it has not |
 | `BOOT` also carries | on a resumed file | `resume` — seconds of session already elapsed when this file was opened, because the card arrived late or was swapped (§9.4) |
 | `STATUS` | Every 60 s | `rows`, `sd_ok`, `heap` |
 | `STATUS` also carries | optionally | `drops` — rows formed with nowhere to write them; `recov` — the blocks that just came back, joined with `+` (§9.4) |
 | `NODE` | Every 300 s, one row per known node | `name`, `lat`, `lon`, `batt`, `last_heard` |
 | `NODE` also carries | **v4**, required | `chan_util`, `air_tx`, `volt`, `pos_time` — see §6.3 |
-| `NODE` also carries | optionally | `snr`, `hops`, `up` — reserved. The library drops these before user code reaches them, so writing them needs a change to the pinned fork; reserving them now means that change will not need a v5 |
+| `NODE` also carries | optionally | `up` — seconds since that node last restarted. Empty when the report carried no metrics block, or carried one without an uptime: a node that has just restarted reports zero and means it, so absence cannot be written as one |
+| `NODE` also carries | optionally | `snr`, `hops` — reserved. The library drops these before user code reaches them, so writing them needs a change to the pinned fork; reserving them now means that change will not need a v5 |
 
 Adding an **optional** key does not bump the schema version: a reader that does not know it emits a warning and carries on, and every old file stays valid. Adding a column, changing a range, or adding a *required* key does.
 
@@ -997,9 +1001,9 @@ Determined only with hardware in hand:
 5. Which antenna model shipped with the radio kits, for the baseline record
 6. The OLED's I²C address — `0x3C` on most of these modules, `0x3D` on some. Scan the bus on the first unit and record it; a wrong address looks exactly like a dead screen
 7. Whether the OLED module's regulator is happy at 3.3 V — many are sold as "3.3–5 V" but a few assume 5 V and are dim or dead on a 3.3 V rail. There is no 5 V rail here
-8. Whether altitude survives the trip. `Meshtastic-arduino` narrows the protocol's 32-bit altitude to a **signed byte** in its node struct, so anything outside ±127 m is already lost before the logger sees it. Fine for the sites in mind, but it is a third field the library quietly damages, and it would need the same treatment as the other two if a taller site is ever used
+8. ~~Whether altitude survives the trip~~ — **fixed in the fork.** The library narrowed the protocol's 32-bit altitude to a signed byte, so anything outside ±127 m did not merely clip, it *wrapped*: a node at 1500 m was recorded at -36 m, which reads as an ordinary spot in a valley rather than as a broken value. The node struct now carries it at full width, and the fork's host tests use readings either side of the old limit so a future narrowing fails the suite
 
-9. **The radio's firmware version is not recorded in the log.** `fw=` in a `BOOT` row is the logger's version; the radio's is pinned in §8.1 and captured only in the per-node `--info` dump. A session whose dump goes missing therefore cannot prove which firmware measured it. Adding a `rfw=` key to the `BOOT` row would close this — an optional key, so it costs no schema version (§6.1) — but the logger would have to learn the radio's version first, and nothing currently asks the radio for it
+9. ~~The radio's firmware version is not recorded in the log~~ — **closed.** The radio sends its version unprompted as device metadata during the config exchange; the library was writing it to a debug log and discarding it. The fork now keeps it alongside the radio settings, and the logger writes it to the `BOOT` row as `rfw`. Optional, so it costs no schema version (§6.1) and files recorded before this stay valid. `fw` remains the logger's own version
 
 10. **Whether the radio's two headers land on the 2.54 mm grid.** `J6` and `J7` are both 2.54 mm pitch, but the distance between them decides whether the base board drops straight into a proto board or sits on standoffs with five short wires instead (§5.5). It changes the assembly method, not the layout
 11. **The assembled height of the radio stack.** It is the tallest thing in the node and the only thing that sets the lid, so the enclosure height in §5.6 stays provisional until it is measured on a seated core

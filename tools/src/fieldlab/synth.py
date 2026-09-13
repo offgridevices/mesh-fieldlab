@@ -52,6 +52,9 @@ class MeshConfig:
     seed: int = 7
     boot_count: int = 1
     firmware: str = "0.1.0"
+    #: The radio's own firmware, which the logger reads off it. Distinct from
+    #: `firmware` above, which is the logger's.
+    radio_firmware: str = "2.7.26.54e0d8d"
     preset: str = "LONG_FAST"
     region: str = "US"
     hop_limit: int = 3
@@ -82,6 +85,11 @@ class MeshConfig:
     #: that never produces one lets every reader downstream get away with
     #: assuming a number is always there.
     metrics_absent_fraction: float = 0.08
+
+    #: How often a report carries a metrics block but no uptime within it.
+    #: Applies only to reports that have metrics at all, since the flag is a
+    #: field inside that block rather than a replacement for it.
+    uptime_absent_fraction: float = 0.10
     #: Fraction of direct receptions that also arrive a second time by another
     #: route — the flood copies the analysis has to remove.
     duplicate_fraction: float = 0.12
@@ -195,6 +203,7 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                 "st_card": "1", "st_write": "1", "st_radio": "1",
                 "st_pos": "1", "st_clock": "1" if c.set_clock else "0",
                 "st_heard": str(c.node_count - 1), "disp": "1", "batt": "92",
+                "rfw": c.radio_firmware,
             }),
         ))
 
@@ -234,6 +243,7 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
         """One row per neighbour the radio knows about, as the logger writes them."""
         for subject in nodes:
             absent = rng.random() < c.metrics_absent_fraction
+            no_uptime = not absent and rng.random() < c.uptime_absent_fraction
             pairs = {
                 "name": subject.name,
                 "lat": f"{subject.lat:.6f}",
@@ -245,6 +255,13 @@ def synth_session(config: MeshConfig | None = None) -> dict[str, str]:
                 "chan_util": S.ABSENT if absent else _pct(utilisation_pct + rng.gauss(0, 0.6)),
                 "air_tx": S.ABSENT if absent else _pct(utilisation_pct / c.node_count + rng.gauss(0, 0.2)),
                 "volt": S.ABSENT if absent else f"{4.02 - subject.index * 0.03:.2f}",
+                # Absent on its own account as well as with the block. The
+                # presence flag sits *inside* the metrics block, so "metrics
+                # present, uptime absent" is a real report the checker has to
+                # accept — generating it only alongside the others would never
+                # exercise that case.
+                "up": S.ABSENT if (absent or no_uptime)
+                      else str(3600 + second + subject.index * 17),
             }
             node.lines.append(_row(
                 # No offset. Reports and packets can land in the same second,

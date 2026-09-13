@@ -4,6 +4,9 @@
 
 #include "clock.h"
 #include "config.h"
+// For the `extra` separators: the radio's firmware version is free text that
+// lands in that column, so it has to be scrubbed against them before it does.
+#include "log_schema.h"
 #include "screen.h"
 
 namespace SelfTest {
@@ -137,6 +140,23 @@ void adoptConfig(Result & r) {
   r.spread_factor  = g_config.spread_factor;
   r.coding_rate    = g_config.coding_rate;
   r.channel_num    = g_config.channel_num;
+  // Empty until the radio has volunteered its metadata, which it does
+  // unprompted during the config exchange. Empty is written as absent rather
+  // than as a made-up version string.
+  if (g_config.has_metadata) {
+    strncpy(r.radio_fw, g_config.firmware_version, sizeof(r.radio_fw) - 1);
+    r.radio_fw[sizeof(r.radio_fw) - 1] = '\0';
+    // Free text from the radio, reaching the one row that makes the rest of
+    // the file interpretable. A comma or a separator in it would split the
+    // BOOT row somewhere no reader could detect, so it is rewritten rather
+    // than trusted — the same treatment the node name gets in logfile.cpp.
+    for (char * q = r.radio_fw; *q; q++) {
+      if (*q == ',' || *q == EXTRA_PAIR_SEP || *q == EXTRA_KV_SEP ||
+          *q < 32 || *q > 126) {
+        *q = '_';
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -159,9 +179,6 @@ void noteOwnNode(const mt_node_t * node) {
   g_battery = node->battery_level;
   g_lat = node->latitude;
   g_lon = node->longitude;
-  // The library narrows the protocol's 32-bit altitude to a single signed
-  // byte, so anything beyond ±127 m is already lost by the time it reaches
-  // here. Recorded as-is; see the open items in the design document.
   g_alt = node->altitude;
 }
 
@@ -409,7 +426,7 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            ";usepreset=%d;txpwr=%d;bw=%lu;sf=%u;cr=%u;chan=%lu;txon=%d"
            ";lat=%.6f;lon=%.6f;alt=%ld"
            ";st_card=%d;st_write=%d;st_radio=%d;st_pos=%d;st_clock=%d;st_heard=%u"
-           ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu",
+           ";disp=%d;batt=%u;tz=%s;utcoff=%ld;clkwait=%lu;rfw=%s",
            (unsigned long)bootCount,
            presetName(r.preset), regionName(r.region), (unsigned)r.hop_limit,
            r.use_preset ? 1 : 0,
@@ -436,7 +453,11 @@ void toExtra(const Result & r, uint32_t bootCount, char * out, size_t n) {
            // Seconds spent held at boot waiting for the time. Zero is the
            // normal case; a large number means the phone was slow, and the
            // give-up value means the file that follows is undated.
-           (unsigned long)(r.clock_wait_ms / 1000));
+           (unsigned long)(r.clock_wait_ms / 1000),
+           // The logger's own version is `fw`. This is the radio's, which
+           // nothing else in the file records — without it a session cannot
+           // say which firmware produced its measurements.
+           r.radio_fw);
 }
 
 const char * verdict(const Result & r) {

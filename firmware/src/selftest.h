@@ -57,6 +57,11 @@ struct Result {
   double   lat            = 0.0;
   double   lon            = 0.0;
   int32_t  alt            = 0;
+
+  // The radio's own firmware version, as it reports it. Empty until it has,
+  // and written to the file as absent rather than guessed at. `fw` in the
+  // BOOT row is this logger's version; this is the other half.
+  char     radio_fw[24]   = {0};
 };
 
 // Fed by the callbacks in main while the test is running.

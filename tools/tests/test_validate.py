@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import BOOT_RADIO_DEFAULTS, RX_NODE, TX_NODE, make_file, row
+from conftest import BOOT_RADIO_DEFAULTS, RX_NODE, T0, TX_NODE, make_file, row
 from fieldlab import schema as S
 from fieldlab.validate import validate_file, validate_text
 
@@ -560,3 +560,113 @@ def test_a_boot_row_without_the_radio_settings_is_incomplete():
 
     text = make_file(row(S.ROW_BOOT, extra=BOOT_EXTRA_V3), row(S.ROW_PKT))
     assert "EXTRA_MISSING" in error_codes(validate_text(text))
+
+
+# ---------------------------------------------------------------------------
+# The radio's own firmware version, and node uptime
+#
+# Both were reaching the library and being discarded before the logger could
+# see them. Both are optional keys, so a file written before the logger asked
+# for them is still a valid v4 file — which is most of the point of adding
+# them this way rather than bumping the version.
+# ---------------------------------------------------------------------------
+
+
+def _file_with(boot_extra: str | None = None, node_extra: str | None = None) -> str:
+    """A realistic session, with one row's `extra` swapped for the one on test.
+
+    Built as a whole file rather than a single row because the checker judges
+    a file — a lone NODE row with no packets earns a warning about the node
+    hearing nothing, which is true and has nothing to do with these fields.
+    """
+    kw_boot = {"extra": boot_extra} if boot_extra is not None else {}
+    kw_node = {"extra": node_extra} if node_extra is not None else {}
+    return make_file(
+        row(S.ROW_BOOT, uptime_ms=100, dev_rx_time=T0, **kw_boot),
+        row(S.ROW_PKT, uptime_ms=5000, dev_rx_time=T0 + 5, pkt_id=1001),
+        row(S.ROW_STATUS, uptime_ms=60000, dev_rx_time=T0 + 60),
+        row(S.ROW_NODE, uptime_ms=65000, dev_rx_time=T0 + 65, **kw_node),
+    )
+
+
+_BOOT_BASE = {
+    "fw": "2.5.4", "preset": "LONG_FAST", "boot": "7",
+    "lat": "39.8283", "lon": "-98.5795", "alt": "0",
+    "ant": "rak-stock-3dbi",
+}
+
+_NODE_BASE = {
+    "name": "N2", "lat": "39.8290", "lon": "-98.5780", "batt": "88",
+    "last_heard": "1786000000", "chan_util": "9.5", "air_tx": "2.4",
+    "volt": "4.01", "pos_time": "1786000000",
+}
+
+
+def test_the_radios_firmware_version_is_accepted_on_a_boot_row():
+    extra = S.format_extra({**_BOOT_BASE, "rfw": "2.7.26.54e0d8d", **BOOT_RADIO_DEFAULTS})
+    result = validate_text(_file_with(boot_extra=extra), "LOG_N1_20260806_0706.csv")
+    assert result.ok
+    assert error_codes(result) == set()
+    assert result.summary.firmware == "2.5.4"   # still the logger's, not the radio's
+
+
+def test_a_boot_row_without_the_radios_firmware_version_is_still_valid(good_file):
+    # The existing bench captures have no `rfw`, and a radio that never sent
+    # its metadata will not produce one either. Neither is a broken file.
+    assert "rfw" not in good_file
+    result = validate_text(good_file, "LOG_N1_20260806_0706.csv")
+    assert result.ok
+
+
+def test_the_radios_firmware_version_is_optional_not_required():
+    # If it were required, every recording taken so far would start failing.
+    spec = S.EXTRA_SPECS[S.ROW_BOOT]
+    assert "rfw" in spec.optional
+    assert "rfw" not in spec.required
+
+
+def test_node_uptime_is_a_key_the_schema_knows():
+    # Without this, the two tests below pass even with `up` deleted from the
+    # schema: an unknown extra key is a warning, and `result.ok` ignores
+    # warnings. The `rfw` side has the same assertion for the same reason.
+    spec = S.EXTRA_SPECS[S.ROW_NODE]
+    assert "up" in spec.optional
+    assert "up" not in spec.required
+
+
+def test_node_uptime_is_accepted():
+    extra = S.format_extra({**_NODE_BASE, "up": "86400"})
+    result = validate_text(_file_with(node_extra=extra), "LOG_N1_20260806_0706.csv")
+    assert result.ok
+    assert error_codes(result) == set()
+    # Warnings too: an unrecognised key is only a warning, so checking errors
+    # alone would pass even if the schema had never heard of `up`.
+    assert codes(result) == set()
+
+
+def test_node_uptime_may_be_absent_and_absent_is_not_zero():
+    # A node that has just restarted genuinely reports zero seconds, so an
+    # absent reading must not be written as one. Both forms must validate, and
+    # they must stay distinguishable once parsed.
+    absent = S.format_extra({**_NODE_BASE, "up": S.ABSENT})
+    fresh = S.format_extra({**_NODE_BASE, "up": "0"})
+
+    for extra in (absent, fresh):
+        result = validate_text(_file_with(node_extra=extra), "LOG_N1_20260806_0706.csv")
+        assert result.ok, f"rejected: {extra}"
+        assert codes(result) == set(), f"flagged: {extra} -> {codes(result)}"
+
+    assert S.parse_extra(absent)["up"] == S.ABSENT
+    assert S.parse_extra(fresh)["up"] == "0"
+    assert S.parse_extra(absent)["up"] != S.parse_extra(fresh)["up"]
+
+
+def test_an_empty_radio_firmware_version_is_absence_not_a_malformed_value():
+    # What the firmware writes whenever the radio has not sent its metadata —
+    # including every bench run with no radio attached, which is most of them.
+    # It must read as "not reported", not as a broken field.
+    extra = S.format_extra({**_BOOT_BASE, "rfw": S.ABSENT, **BOOT_RADIO_DEFAULTS})
+    result = validate_text(_file_with(boot_extra=extra), "LOG_N1_20260806_0706.csv")
+    assert result.ok
+    assert error_codes(result) == set()
+    assert codes(result) == set()
