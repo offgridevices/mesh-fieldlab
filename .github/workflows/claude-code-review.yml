@@ -123,6 +123,39 @@ jobs:
       # the job token. The action still `git fetch`es the PR branch; without a
       # credential on origin that fails with "could not read Username". Re-attach
       # the token only after the installs and build have finished.
+      # Claude's own `gh` runs on the Claude app's token, which cannot read
+      # check results ("Resource not accessible by integration"). This step
+      # reads them with this job's token instead and leaves them in
+      # `.ci-results/` for Claude to Read. Untracked, never committed.
+      - name: Collect CI results for Claude
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # The `ci` job ran earlier in this same workflow run.
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -p .ci-results
+          : > .ci-results/summary.md
+          if [ -z "$RUN_ID" ]; then
+            echo "No CI run was found for this commit." >> .ci-results/summary.md
+            exit 0
+          fi
+          echo "# CI results (run $RUN_ID)" >> .ci-results/summary.md
+          echo >> .ci-results/summary.md
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name | startswith("ci /")) | [.id, .name, .conclusion // .status] | @tsv' |
+          while IFS=$'\t' read -r id name result; do
+            file=".ci-results/$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_').log"
+            # Job logs come back as a redirect to a blob; curl follows it. The
+            # sed strips timestamps and terminal colour codes.
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/jobs/$id/logs" |
+              sed -E 's/^[0-9T:.-]+Z //; s/\x1b\[[0-9;]*m//g' > "$file" ||
+              echo "(log not available)" > "$file"
+            echo "- **$name**: $result. Full log: \`$file\`" >> .ci-results/summary.md
+          done
+          cat .ci-results/summary.md
+
       - name: Allow Claude action to fetch the PR branch
         run: git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
         env:
@@ -156,9 +189,7 @@ jobs:
             review only starts when it is green: the Python tool tests
             (including the pin-map contract check) and the firmware compile
             (including the no-WiFi/BLE check). Green means the existing tests
-            pass, not that the change is right. Run
-            `gh pr checks ${{ github.event.pull_request.number }}` and, where
-            useful, `gh run view <run-id> --log` to read what CI actually did
+            pass, not that the change is right. Read `.ci-results/summary.md` and, where useful, the per-job logs beside it to see what CI actually did
             before you comment.
 
             **Check the pull request's description against the diff.** Every
@@ -266,7 +297,7 @@ jobs:
           # DELETE. `Read`, `Grep` and `Glob` already do everything those tools
           # would be there for.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh run view:*),Bash(uv run --directory tools pytest:*),Bash(uv run --directory tools validate-csv:*),Bash(uv run --directory tools synth-log:*),Bash(uv run --directory tools analyze-logs:*),Bash(pio run -d firmware),Read,Write,Edit,Grep,Glob,Bash(ls:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git status:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh run view:*),Bash(uv run --directory tools pytest:*),Bash(uv run --directory tools validate-csv:*),Bash(uv run --directory tools synth-log:*),Bash(uv run --directory tools analyze-logs:*),Bash(pio run -d firmware),Read,Write,Edit,Grep,Glob,Bash(ls:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git status:*)"
             --max-turns 120
             --model claude-opus-5-5
             --effort medium
