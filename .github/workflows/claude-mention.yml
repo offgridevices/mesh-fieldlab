@@ -1,0 +1,238 @@
+name: Claude Mention
+
+# Reply when someone writes @claude in a pull request — in the conversation,
+# on a specific line of the diff, or in a review summary. This is the
+# conversational half of the setup; `claude-code-review.yml` is the automatic
+# first pass that runs without being asked.
+#
+# Use it to argue with a review comment, ask why something is a finding, or ask
+# for one specific fix. It answers in the same thread.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+# One reply at a time per pull request. Three quick comments would otherwise
+# start three paid runs at once, and their replies would interleave.
+concurrency:
+  group: claude-mention-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  # Everything that decides *whether* to respond, kept separate from the job
+  # that spends money doing it and holds `id-token: write`. A job-level `if:`
+  # can't run `gh`, so "is this PR's head actually in this repository" has to
+  # be resolved in a step and handed to the next job as an output.
+  gate:
+    # Small runner: this job makes one `gh pr view` call and exits.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+
+    # Three gates, all of which have to hold:
+    #
+    #  - The comment actually says @claude. Every comment on every pull request
+    #    starts this workflow; without this check every one of them would start
+    #    a paid model run.
+    #  - It is on a pull request, not a plain issue. `issue_comment` fires for
+    #    both, and there is no diff to reason about on an issue.
+    #  - The author can write to this repository. **This repository is public**,
+    #    so this is the gate that stops any stranger who can comment from
+    #    starting a paid model run on the billing account. Do not widen it.
+    if: >-
+      (
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request != null &&
+         contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' &&
+         contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' &&
+         contains(github.event.review.body, '@claude'))
+      ) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+               github.event.comment.author_association ||
+               github.event.review.author_association)
+
+    permissions:
+      pull-requests: read
+
+    outputs:
+      should_run: ${{ steps.pr.outputs.should_run }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.sha }}
+
+    steps:
+      # `issue_comment` (a plain PR-conversation comment, the common case)
+      # carries no pull-request ref or SHA in its payload — GITHUB_SHA for
+      # that event is the default branch's tip, not the PR's. Left alone,
+      # `actions/checkout` in the next job would silently check out `main`
+      # while Claude answers questions about a different branch's code.
+      # Resolving the PR number and head SHA once, here, and pointing
+      # checkout at it, fixes that for all three trigger types. This also
+      # checks the PR's head is in this same repository — the `respond` job
+      # below runs the PR's own tests and firmware build with `id-token: write`
+      # live for the whole job, and a fork's PR is exactly the case that
+      # combination is dangerous for. Every value here comes from the GitHub
+      # API response, not from comment text, so nothing touches
+      # attacker-controllable input.
+      - name: Resolve PR head and check it isn't a fork
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+          INFO=$(gh pr view "$PR_NUMBER" --repo "${{ github.repository }}" --json headRefOid,isCrossRepository)
+          HEAD_SHA=$(echo "$INFO" | jq -r .headRefOid)
+          IS_FORK=$(echo "$INFO" | jq -r .isCrossRepository)
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "$IS_FORK" = "true" ]; then
+            echo "Pull request head is in a different repository (fork); skipping."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  respond:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    # Same runner as the review workflow: 2 vCPU, for the free-plan allowance
+    # (see ci.yml). This job installs the tools and PlatformIO and can run
+    # tests, a firmware compile and probe tests before replying.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      # Lets Claude read CI results (checks, run logs) on the PR it's
+      # answering about, same as claude-code-review.yml.
+      actions: read
+      # Required: the action mints its GitHub token by exchanging an OIDC
+      # token. Without this it fails before reading a line. See the note in
+      # claude-code-review.yml — removing it is the mistake that breaks this.
+      id-token: write
+
+    steps:
+      # Pinned to a commit, not a tag. A tag is mutable, and whoever controls
+      # it controls what runs here with a token in scope. `actions/checkout`
+      # v7 (Node 24 runtime — v4 was Node 20 and triggered deprecation noise).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.head_sha }}
+          # Full history so `git log` and `git blame` work — answering "why is
+          # this line like this?" needs to see how it got that way.
+          fetch-depth: 0
+          # This job holds `id-token: write` for every step, including the
+          # installs and firmware build below. Persisting the checkout's own
+          # token into `.git/config` on top of that would give a malicious
+          # build step a second credential to steal. The action
+          # re-authenticates itself; see the remote step below.
+          persist-credentials: false
+
+      # Same toolchain as ci.yml, pinned to commits because this job holds a
+      # token. Lets Claude run the tests or compile the firmware to check a
+      # specific claim when answering, instead of only reasoning from reading.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install Python tools
+        working-directory: tools
+        run: uv sync --locked
+
+      - name: Cache PlatformIO toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: Install PlatformIO and pre-build firmware
+        working-directory: firmware
+        run: |
+          uv tool install --with pip platformio
+          pio run
+
+      # Checkout used persist-credentials: false so install/build cannot steal
+      # the job token. The action still `git fetch`es the PR branch; without a
+      # credential on origin that fails with "could not read Username". Re-attach
+      # the token only after the installs and build have finished.
+      - name: Allow Claude action to fetch the PR branch
+        run: git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # `anthropics/claude-code-action` v1.0.233, pinned for the same reason.
+      - uses: anthropics/claude-code-action@8cf3482550831fb35a4fc3fbf7ca139cf8028b4c # v1.0.233
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ needs.gate.outputs.pr_number }}
+
+            Someone mentioned you in a comment on this pull request. Read the
+            comment that triggered this run, answer it, and reply in the same
+            thread.
+
+            **Read `README.md` and `docs/packet-logger-design.md` first.** They
+            state this repository's scope (measurement and analysis only, not a
+            mesh implementation), the wiring, the CSV format and the bench
+            sequence, and they bind your answer. The CSV schema that the
+            firmware writes and the Python tools validate is the product; the
+            pin map in `firmware/src/config.h` is a contract with the board in
+            `offgridevices/offgrid-hardware`.
+
+            **Read the codebase, not just the diff.** The whole repository is
+            checked out at this pull request's actual head commit. Before
+            answering a question about a line, look at what calls it, whether
+            a test already covers it, and whether a decision about it is
+            already written down somewhere.
+
+            **Verify instead of guessing, when you can check cheaply.** Run
+            `uv run --directory tools pytest` (or one file or `-k` expression),
+            compile with `pio run -d firmware`, or drive the tools with
+            `uv run --directory tools validate-csv`, `synth-log` and
+            `analyze-logs`, and answer from the real output. You can also read
+            CI's own results with `gh pr checks` and `gh run view`.
+
+            **If you are asked to test something, you have a sandbox.** This
+            runner is a throwaway checkout: you can write probe test files and
+            sample CSVs (Write/Edit) and run them, then report the input and
+            the real output. There is no board attached — nothing can be
+            flashed and no hardware behaviour can be observed, so say so when
+            an answer depends on it. Nothing you write is committed or pushed;
+            it disappears with the runner.
+
+            How to answer:
+
+            - If you are asked to justify a finding, either defend it with
+              evidence — the input that breaks it, the caller that disagrees —
+              or say plainly that you were wrong. Do not restate the finding
+              more confidently as a substitute for evidence.
+            - If you are asked whether something is a problem and it is not,
+              say so in a sentence and stop.
+            - If you are asked to make a change, you cannot land it: edits here
+              stay in the throwaway checkout and are never committed. You may
+              make the change locally to prove it passes, then reply with the
+              exact change, anchored to the file and line, so a human can
+              apply it.
+            - Keep it short. This is a comment thread, not a report.
+
+          # Read-only on the repository, plus Write/Edit for throwaway probe
+          # tests and the same fixed test/compile/tool commands as
+          # claude-code-review.yml — see that file's comment. `pio run -d
+          # firmware` is exact, so no `-t upload`. `find`, `sed`, `cat` and
+          # `gh api` are absent: `find -exec` runs arbitrary commands, `sed -i`
+          # writes files, and `gh api` takes POST and DELETE.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh run view:*),Bash(uv run --directory tools pytest:*),Bash(uv run --directory tools validate-csv:*),Bash(uv run --directory tools synth-log:*),Bash(uv run --directory tools analyze-logs:*),Bash(pio run -d firmware),Read,Write,Edit,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*)"
+            --max-turns 60
+            --model claude-opus-5-5
+            --effort medium

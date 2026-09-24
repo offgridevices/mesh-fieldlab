@@ -1,0 +1,87 @@
+name: CI
+
+# What has to pass before anything is merged, and what the Claude review waits
+# on. Two jobs, one per half of the repository:
+#
+#   - `tools`    — the Python schema/validation/analysis tests, which include
+#                  the pin-map contract check against config.h and the design
+#                  doc.
+#   - `firmware` — a compile of the logger firmware. The build's post script
+#                  (check_radios.py) fails it if a WiFi or BLE entry point is
+#                  linked into the image, so "it compiles" here also means "it
+#                  has no 2.4 GHz radio in it".
+#
+# Deliberately absent: anything that needs a board. Flashing, the power-up
+# self-test and the bench sequence in docs/packet-logger-design.md stay manual.
+# `firmware/radio/check_uf2.py` is also absent — the UF2 it checks is not
+# tracked in this repository.
+on:
+  push:
+    branches: [main]
+  # Pull requests do not trigger this file directly. `claude-code-review.yml`
+  # calls it as its first job and only starts the Claude review once every job
+  # here is green, so a PR runs this suite exactly once and a red suite stops
+  # there — no paid review of code that does not pass its own tests.
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: this workflow only checks out, installs, tests and compiles.
+permissions:
+  contents: read
+
+jobs:
+  tools:
+    # 2 vCPU: the org is on Blacksmith's free plan (3,000 2-vCPU minutes a
+    # month, and a 4-vCPU minute counts double). Same Ubuntu 24.04 image as
+    # GitHub's runner; reverting is this line back to `ubuntu-latest`.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: tools/uv.lock
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Tests
+        run: uv run pytest
+
+  firmware:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # The first build downloads the pioarduino platform and toolchain, which
+    # is most of this job's time; the cache below makes later runs quick.
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+
+      # Keyed on platformio.ini, which pins the platform and every library to
+      # an exact release or commit, so the cache busts exactly when they change.
+      - name: Cache PlatformIO toolchain
+        uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('firmware/platformio.ini') }}
+
+      # `--with pip` is required, see firmware/README.md: PlatformIO shells out
+      # to pip while installing esptool's dependencies, and a uv tool
+      # environment has none.
+      - name: Install PlatformIO
+        run: uv tool install --with pip platformio
+
+      - name: Compile (includes the no-2.4 GHz-radio check)
+        run: pio run
