@@ -1,37 +1,62 @@
 name: Claude Code Review
 
+# Every pull request goes through two stages, in this order:
+#
+#   1. `ci`     — the full suite from ci.yml (Python tool tests, firmware
+#                 compile), called directly as a reusable workflow.
+#   2. `review` — Claude reads the diff, the codebase and the CI output, may
+#                 run the tests, compile the firmware and write throwaway probe
+#                 tests in its own checkout, and leaves line-by-line comments.
+#
+# `review` has `needs: ci`, so a red suite stops the pull request at stage 1 and
+# no paid review runs. Fix it (by hand or with an agent), push, and both stages
+# run again on the new commit.
+#
+# `pull_request` (not `workflow_run`) means GitHub loads this file from the PR
+# head, so fixes on the branch take effect without a merge to `main`. This
+# repository is public: fork PRs still get CI but never the review, because the
+# review job holds `id-token: write` and runs the PR's own code.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
 
-# One review per pull request. Pushing three commits in a minute would
-# otherwise start three paid runs racing each other; now the newest wins and
-# the rest are cancelled before they cost anything.
+# One run per pull request. Pushing three commits in a minute would otherwise
+# start three paid runs racing each other; now the newest wins and the rest are
+# cancelled before they cost anything.
 #
-# `synchronize` is also what makes this iterative: push a fix and the review
-# runs again against the new head, so findings get re-checked until they stop
+# `synchronize` is also what makes this iterative: push a fix and both stages
+# run again against the new head, so findings get re-checked until they stop
 # coming back. It does not fix anything on its own.
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  review:
-    runs-on: ubuntu-latest
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
-    # Two exclusions, both about not paying for reviews nobody asked for:
+  review:
+    needs: ci
+    # 2 vCPU for the free-plan allowance; see the note in ci.yml.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    # Three exclusions, all about not paying for reviews nobody asked for:
     #
     #  - Drafts. A draft is work in progress by definition; reviewing every
     #    intermediate push is noise and cost. Marking it ready fires
     #    `ready_for_review`, which is in the trigger list above, so the review
     #    arrives exactly when the pull request is actually offered for review.
     #  - Dependabot. Version-bump pull requests are a lockfile diff and a
-    #    changelog link. There is no dependabot config here yet; the guard is
-    #    in place so enabling one later does not quietly start paying for
-    #    reviews of lockfile churn.
+    #    changelog link.
+    #  - Forks. This repository is public, and the review job runs the PR's own
+    #    code with `id-token: write` live.
     if: >-
       github.event.pull_request.draft == false &&
-      github.actor != 'dependabot[bot]'
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
 
     # Backstop so a hung run fails in the low tens of minutes rather than
     # sitting on GitHub's default 6-hour job ceiling with a paid model attached.
@@ -46,23 +71,75 @@ jobs:
       # theory that a reviewer only needs to comment is the mistake that breaks
       # this file.
       id-token: write
+      # Lets Claude read CI results (checks, run logs) on the PR.
+      actions: read
 
     steps:
       # Pinned to a commit rather than a tag. A tag is mutable, and whoever
       # controls it controls what runs in this repository with a token in
-      # scope. This is `actions/checkout` v4.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # scope. This is `actions/checkout` v7.0.1.
+      #
+      # `ref` pins the review to the exact SHA CI just passed on, even if the
+      # PR branch moves on while this job is starting.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           # Full history rather than a shallow clone, so `git log` and
           # `git blame` work. The review is markedly better when it can see why
           # a line came to be the way it is, not only that it changed.
           fetch-depth: 0
+          # This job holds `id-token: write` for every step, including the
+          # installs and the firmware build below. Persisting the checkout's
+          # own token into `.git/config` on top of that would give a malicious
+          # build step a second credential to steal. The action
+          # re-authenticates itself; see the remote step below.
+          persist-credentials: false
 
-      # Likewise. This is `anthropics/claude-code-action` v1. Re-resolve the
-      # tag and update this line deliberately when picking up a new version.
-      - uses: anthropics/claude-code-action@c81e3bc69d1b18badbb63ba39581218f02421678
+      # The sandbox: the same toolchain ci.yml uses, so Claude can run the
+      # tests, compile the firmware, and run probe tests of its own against
+      # this exact commit rather than only reading the diff. Pinned to commits
+      # for the same reason as checkout: this job holds a token.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install Python tools
+        working-directory: tools
+        run: uv sync --locked
+
+      - name: Cache PlatformIO toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('firmware/platformio.ini') }}
+
+      # Pre-builds once so the platform and libraries are downloaded before
+      # Claude starts; a compile Claude runs afterwards takes seconds.
+      - name: Install PlatformIO and pre-build firmware
+        working-directory: firmware
+        run: |
+          uv tool install --with pip platformio
+          pio run
+
+      # Checkout used persist-credentials: false so install/build cannot steal
+      # the job token. The action still `git fetch`es the PR branch; without a
+      # credential on origin that fails with "could not read Username". Re-attach
+      # the token only after the installs and build have finished.
+      - name: Allow Claude action to fetch the PR branch
+        run: git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Likewise. This is `anthropics/claude-code-action` v1.0.233 (Claude Code
+      # 2.1.281). Re-resolve the tag and update this line deliberately when
+      # picking up a new version.
+      - uses: anthropics/claude-code-action@8cf3482550831fb35a4fc3fbf7ca139cf8028b4c # v1.0.233
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Let the Cursor cloud agent's bot identity trigger this review. By
+          # default the action refuses any bot-initiated run. Scoped to this one
+          # login on purpose — never "*" — so the paid review stays closed to
+          # every other bot. The fork guard on this job's `if:` still holds.
+          allowed_bots: "cursor[bot]"
 
           # Leaves a checklist comment that fills in as the review proceeds, so
           # a twelve-minute run shows its work instead of looking hung.
@@ -74,6 +151,37 @@ jobs:
 
             Review this pull request for correctness, security, and obvious
             bugs.
+
+            **The full CI suite already passed on this exact commit** — this
+            review only starts when it is green: the Python tool tests
+            (including the pin-map contract check) and the firmware compile
+            (including the no-WiFi/BLE check). Green means the existing tests
+            pass, not that the change is right. Run
+            `gh pr checks ${{ github.event.pull_request.number }}` and, where
+            useful, `gh run view <run-id> --log` to read what CI actually did
+            before you comment.
+
+            **Check the pull request's description against the diff.** Every
+            change in the diff should be something the description asks for,
+            and everything the description claims should be in the diff.
+            Unrelated changes riding along, or a claimed fix that isn't there,
+            are findings.
+
+            **You have a sandbox — use it to test, not just read.** This runner
+            is a throwaway checkout of this commit with the Python tools and
+            PlatformIO installed and the firmware already built once. You can
+            run `uv run --directory tools pytest` (or one test file or `-k`
+            expression), compile with `pio run -d firmware`, and drive the
+            tools with `uv run --directory tools validate-csv`, `synth-log` and
+            `analyze-logs`. You can write throwaway test files and sample CSVs
+            (Write/Edit) to probe the edge cases this change should handle —
+            a truncated last row, an empty log, RSSI/SNR at their limits, a
+            clock that never set, a header from an older firmware — and run
+            them. There is no board attached: nothing can be flashed and no
+            hardware behaviour can be observed, so say so rather than guess
+            when a claim depends on it. Nothing you write is committed or
+            pushed; it disappears with the runner. When a probe finds a real
+            problem, put the failing input and the output in your comment.
 
             **Read the codebase, not just the diff.** The whole repository is
             checked out and you have read access to all of it. A diff read on
@@ -135,18 +243,30 @@ jobs:
             speculative ones. If you looked at something and it is fine, do not
             comment on it.
 
-            Finish with a brief top-level summary.
+            If a tool you need is not available to you, say so in the summary
+            naming the tool, rather than abandoning the review.
+
+            Finish with a brief top-level summary: whether the change does what
+            the description says, the findings that must be fixed before merge,
+            and anything you verified yourself by running a command or a probe
+            test rather than by reading.
 
           # `--allowedTools`, camelCase, per the action's own examples. The
           # kebab-case spelling is silently not the flag it parses.
           #
-          # **Genuinely read-only.** Notably absent: `find`, `sed`, `cat` and
-          # friends. `find -exec` runs arbitrary commands and `sed -i` writes
+          # Read-only on the repository, plus the test/compile/tool commands
+          # and Write/Edit for throwaway probe tests in this checkout.
+          # Write/Edit cannot reach GitHub: no git commit or push is allowed and
+          # the job token is read-only on contents, so anything written dies
+          # with the runner. `pio run -d firmware` is exact — no `-t upload` —
+          # and there is no board on the runner anyway. Notably absent:
+          # `find`, `sed`, `cat` and friends. `find -exec` runs arbitrary commands and `sed -i` writes
           # files, so an allowlist containing them is a shell in two disguises.
           # `gh api` is absent for the same reason — that verb takes POST and
           # DELETE. `Read`, `Grep` and `Glob` already do everything those tools
-          # would be there for, and they cannot execute or write. What is left
-          # reads the repository, reads the pull request, and writes comments.
+          # would be there for.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh run view:*),Bash(uv run --directory tools pytest:*),Bash(uv run --directory tools validate-csv:*),Bash(uv run --directory tools synth-log:*),Bash(uv run --directory tools analyze-logs:*),Bash(pio run -d firmware),Read,Write,Edit,Grep,Glob,Bash(ls:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git status:*)"
             --max-turns 120
+            --model claude-opus-5-5
+            --effort medium
